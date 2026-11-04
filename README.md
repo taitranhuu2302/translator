@@ -43,3 +43,7 @@ Development builds are currently signed ad-hoc. A stable self-signed identity is
 - [docs/adr/](docs/adr/) — architecture decisions
 - [.scratch/translator-v1/spec.md](.scratch/translator-v1/spec.md) — the v1 spec
 - [.scratch/translator-v1/issues/](.scratch/translator-v1/issues/) — implementation tickets
+
+## License
+
+MIT — see [LICENSE](LICENSE).
