@@ -1,0 +1,11 @@
+.DS_Store
+
+# Build output
+build/
+DerivedData/
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
