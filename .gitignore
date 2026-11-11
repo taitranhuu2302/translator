@@ -1,11 +1,10 @@
 .DS_Store
 
-# Build output
-build/
-DerivedData/
+# Rust build output
+target/
 
-# Xcode user state
-xcuserdata/
-*.xcuserstate
-*.xcscmblueprint
-*.xccheckout
+# Node
+node_modules/
+
+# Tauri generated
+**/gen/schemas/

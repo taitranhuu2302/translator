@@ -8,7 +8,8 @@
 
 - [ ] `⌃⌥D` with a Selection opens the popup next to the cursor and shows a translating state immediately, before any network response
 - [ ] The translation replaces the translating state in the same popup
-- [ ] The popup never takes key focus: the user can keep typing in the source app while it is open
+- [ ] The popup becomes key so Enter and Escape reach it, without activating the app: the source app keeps its menu bar and stays frontmost
+- [ ] When the popup closes, typing goes back to the source app with the caret where it was
 - [ ] With Target set to English, a Vietnamese Selection translates to English and an English Selection translates to Vietnamese
 - [ ] Text longer than the keyless provider's per-request byte cap is split and rejoined in order, with Vietnamese diacritics intact
 - [ ] Translating the same Selection twice returns the second result without a network request

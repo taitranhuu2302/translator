@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Panel spike</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        margin: 0;
+        font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+        background: #101014;
+        color: #f2f2f7;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      main { padding: 14px 16px; }
+      h1 { margin: 0 0 8px; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: #8e8e93; }
+      dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 10px; }
+      dt { color: #8e8e93; }
+      dd { margin: 0; font-variant-numeric: tabular-nums; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #1f1f27; padding: 1px 5px; border-radius: 4px; }
+      input { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid #3a3a44; background: #1a1a21; color: inherit; font: inherit; }
+      p.hint { margin: 8px 0 0; color: #8e8e93; font-size: 12px; }
+      .ok { color: #34d399; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Panel spike</h1>
+      <dl>
+        <dt>Keys received</dt><dd id="count">0</dd>
+        <dt>Last key</dt><dd><code id="last">—</code></dd>
+        <dt>App active?</dt><dd><code id="active">—</code></dd>
+      </dl>
+      <input id="field" placeholder="Type here — does the caret stay in the other app?" autocomplete="off" />
+      <p class="hint">Enter or Escape hides the panel. Press ⌃⌥D again to reopen.</p>
+    </main>
+    <script>
+      const count = document.getElementById("count");
+      const last = document.getElementById("last");
+      const active = document.getElementById("active");
+      const field = document.getElementById("field");
+      let keys = 0;
+
+      const paintActive = () => {
+        const isActive = document.hasFocus();
+        active.textContent = isActive ? "yes" : "no";
+        active.className = isActive ? "ok" : "";
+      };
+      window.addEventListener("focus", paintActive);
+      window.addEventListener("blur", paintActive);
+
+      window.addEventListener("keydown", (event) => {
+        keys += 1;
+        window.__TAURI__.core.invoke("log_key", { key: event.key }).catch(() => {});
+        count.textContent = String(keys);
+        last.textContent = event.key;
+        if (event.key === "Enter" || event.key === "Escape") {
+          event.preventDefault();
+          window.__TAURI__.core.invoke("hide_panel");
+        }
+      });
+
+      paintActive();
+      setTimeout(() => field.focus(), 50);
+    </script>
+  </body>
+</html>
