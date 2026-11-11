@@ -41,15 +41,20 @@ See [ADR-0001](docs/adr/0001-rust-core-with-tauri-shell.md) for the stack and [A
 
 ## Build
 
-The workspace lands with ticket 01. Until then the only runnable thing is the panel spike:
+```bash
+./scripts/test.sh     # frontend typecheck and build, IPC boundary check, cargo test
+./scripts/build.sh    # build the frontend and the app, then sign target/bundle/Translator.app
+```
+
+`scripts/build.sh` packages a real `.app` with `LSUIElement` and signs it with the stable local identity; it refuses to package unsigned or ad-hoc. See [ADR-0004](docs/adr/0004-stable-signing-from-first-commit.md).
+
+The panel spike (deleted when the real popup lands in ticket 04) is still runnable:
 
 ```bash
 cargo run --manifest-path spike/panel/Cargo.toml
 ```
 
 Press `⌃⌥D` to show the panel; `Enter` or `Escape` hides it; `⌃C` quits. No bundle, signing or permission is needed for the spike.
-
-Packaged builds must be signed with a stable identity or the Accessibility grant is lost on every rebuild — see [ADR-0004](docs/adr/0004-stable-signing-from-first-commit.md).
 
 ## Project docs
 
