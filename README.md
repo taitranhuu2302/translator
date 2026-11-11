@@ -2,7 +2,7 @@
 
 A macOS menu-bar app for translating text you have selected in any app — without leaving the app you are typing in.
 
-**Status: scaffolding.** The Xcode project builds and runs today: a menu-bar item, four global shortcuts, the Translate Window shell, and the non-activating popup shell. Selection capture, translation providers, Replace, and Read Aloud are specified and ticketed but not implemented yet.
+**Status: pre-implementation.** The design is settled and the riskiest assumption is proven: a Tauri window becomes a non-activating `NSPanel` that receives keys while the app behind it keeps focus (`spike/panel`). The Rust workspace itself does not exist yet — ticket 01 creates it.
 
 ## Shortcuts
 
@@ -23,19 +23,33 @@ A macOS menu-bar app for translating text you have selected in any app — witho
 
 **Capture.** The macOS Accessibility API first; a clipboard round trip for apps that expose nothing (browsers, Electron apps, terminals). Every path reports failure rather than silently doing nothing, and secure fields are refused outright.
 
+## Stack
+
+A Rust workspace with a Tauri v2 shell and a React UI:
+
+- `core` — the product logic and the port traits, with no platform dependency.
+- `platform-macos` — the only crate that touches AppKit, ApplicationServices, AVFoundation or the Keychain.
+- `app` — the Tauri shell that builds the ports, owns the engine and hosts the UI.
+
+See [ADR-0001](docs/adr/0001-rust-core-with-tauri-shell.md) for the stack and [ADR-0005](docs/adr/0005-non-activating-panel-popup.md) for the popup.
+
 ## Requirements
 
 - macOS 14 or later
-- Xcode 26
+- Rust toolchain (stable)
+- Node 20+ — build-time only, never a runtime dependency
 
 ## Build
 
+The workspace lands with ticket 01. Until then the only runnable thing is the panel spike:
+
 ```bash
-xcodebuild -project Translator.xcodeproj -scheme Translator -configuration Debug -derivedDataPath build build
-open build/Build/Products/Debug/Translator.app
+cargo run --manifest-path spike/panel/Cargo.toml
 ```
 
-Development builds are currently signed ad-hoc. A stable self-signed identity is required before granting Accessibility permission — see [ADR-0004](docs/adr/0004-stable-signing-from-first-commit.md).
+Press `⌃⌥D` to show the panel; `Enter` or `Escape` hides it; `⌃C` quits. No bundle, signing or permission is needed for the spike.
+
+Packaged builds must be signed with a stable identity or the Accessibility grant is lost on every rebuild — see [ADR-0004](docs/adr/0004-stable-signing-from-first-commit.md).
 
 ## Project docs
 
