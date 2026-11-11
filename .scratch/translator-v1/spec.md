@@ -10,6 +10,8 @@ The same person is often reading English and wants to hear a word or a sentence 
 
 Existing menu-bar translators are either slow to open, visually unpleasant, or depend on a cloud API that requires billing to set up — so the app is useless until the user has an account.
 
+The project itself has a second problem: it is written in Swift against AppKit, so every piece of product logic — direction resolution, the provider ladder, chunking, history, settings — is locked to macOS and can only be exercised by building the app. Porting later means rewriting that logic, and testing it today means launching Xcode.
+
 ## Solution
 
 A macOS menu-bar app that acts on the Selection in whatever app is focused, through four global shortcuts:
@@ -21,7 +23,9 @@ A macOS menu-bar app that acts on the Selection in whatever app is focused, thro
 
 Direction is inferred from the Language Pair: if the Selection is already in the Target language, it is translated into the other member; otherwise into the Target.
 
-Translation comes from Azure Translator F0, falling back to a keyless provider so the app works before any key is configured. Improve uses Groq. The app starts in well under a second, lives only in the menu bar, and never steals focus from the app the user is typing in.
+Translation comes from Azure Translator F0, falling back to a keyless provider so the app works before any key is configured. Improve uses Groq. The app lives only in the menu bar, opens fast enough that a shortcut never feels like waiting for a program to start, and never steals focus from the app the user is typing in.
+
+Underneath, the product logic moves into a Rust core with no platform dependency. The macOS layer is one implementation of that core's ports, and the UI is a web view. A second platform can later add an implementation without touching translation, direction, chunking, caching, history, or settings.
 
 ## User Stories
 
@@ -53,8 +57,8 @@ Translation comes from Azure Translator F0, falling back to a keyless provider s
 26. As someone who set Target to English, I want the other language to be implied, so that the pair is one setting rather than two.
 27. As someone who translated something last week, I want to search local history for 30 days, so that I can find an earlier translation.
 28. As someone privacy-conscious, I want history to stay on this Mac and age out automatically, so that old text does not accumulate forever.
-29. As someone with API keys, I want them stored in the Keychain, so that they never sit in a plain plist I might sync or share.
-30. As someone launching the app, I want it ready in well under a second, so that a shortcut never feels like waiting for a program to start.
+29. As someone with API keys, I want them stored in the Keychain, so that they never sit in a plain file I might sync or share.
+30. As someone launching the app, I want it to open as fast as the machine allows and to start with my Mac if I choose, so that a shortcut never feels like waiting for a program to start.
 31. As someone who runs it all day, I want it in the menu bar only, so that it does not clutter the Dock or `⌘Tab`.
 32. As someone with several desktops, I want the popup on the active Space, so that it appears where I am working.
 33. As someone inside a full-screen app, I want shortcuts and the popup to work, so that I don't have to leave full screen.
@@ -64,85 +68,92 @@ Translation comes from Azure Translator F0, falling back to a keyless provider s
 37. As someone translating both directions in one session, I want a swap control in the Translate Window, so that I can reverse one translation without changing Target.
 38. As someone offline, I want a specific offline error rather than a generic failure, so that I don't assume the app is broken.
 39. As someone trying the app for the first time, I want a short onboarding that grants Accessibility and lists the four shortcuts, so that I know how to begin.
+40. As someone who rebuilds or updates the app, I want the Accessibility grant to survive, so that capture does not silently stop working after every release.
+41. As someone pressing the shortcut with nothing selected, I want to be told to select something, so that the app does not look broken.
+42. As someone whose primary provider failed, I want the translation to still arrive from the fallback and to say which provider answered, so that I can trust the result.
+43. As someone who wants the result without Replace, I want to copy the translation from the popup, so that I can paste it somewhere else.
+44. As someone who speaks a language other than Vietnamese or English, I want to choose another pair from the languages the providers support, so that the app is not limited to one pair.
+45. As someone who never opens the Translate Window, I want the menu bar item to show the shortcuts and the permission state, so that I can use the app without hunting for a settings screen.
+46. As someone who changes my mind, I want to turn off start-at-login and see the app already running, so that I control when it launches.
+47. As someone who cares about what leaves my Mac, I want only the text I am translating to be sent to a provider, so that history, settings and other text stay local.
 
 ## Implementation Decisions
 
-**Shape of v1.** Menu-bar-only app (`LSUIElement`, `.accessory` activation policy), Swift 6 toolchain in Swift 5 language mode, SwiftUI for view content hosted inside AppKit windows and panels. The existing scaffold already provides the status item, the four Carbon hotkeys, the Translate Window shell, and the non-activating popup shell.
+**Shape of v1.** A menu-bar-only macOS app (`LSUIElement`, accessory activation policy) built as a Rust workspace plus a web UI. Three parts:
 
-**Capture and Replace.** Accessibility first, clipboard as fallback, per ADR-0002. Reading: try the focused element's selected-text attribute; if the element exposes nothing, save the clipboard, synthesize `⌘C`, read, restore. Writing: Replace only when the selected-text attribute reports itself settable; otherwise write the clipboard and synthesize `⌘V`, then restore. Every path reports a typed failure rather than silently doing nothing. Refuse entirely when secure event input is active (password fields, screen-sharing prompts).
+- **`core`** — no platform dependency at all. Owns the `TranslatorEngine`, direction resolution, sentence chunking, the provider ladder, the LRU cache, history, settings, and the port traits the platform must satisfy: selection capture, translation provider, speech output, history store, settings store, and credential store. Everything that has a rule worth testing lives here.
+- **`platform-macos`** — implements the ports: Accessibility and clipboard capture, synthesized key events, Carbon global hotkeys, Keychain, SQLite, speech synthesis, and the non-activating panel.
+- **`app`** — the Tauri v2 shell: builds the ports, owns the engine, exposes IPC, and hosts the React UI.
 
-**Provider ladder.** Per ADR-0003: Azure Translator F0 as primary, MyMemory as the keyless fallback, Groq for Improve and for text the others cannot handle. Google's unofficial `translate_a/single` endpoint is not used. Providers are tried in order, and a provider that fails with a quota or auth error is skipped for the remainder of the session.
+**One seam.** Tests drive `TranslatorEngine` through its public API with fake ports and assert on observable outcomes: the translation returned, the typed error surfaced, the order in which ports were called, the bytes sent to a provider, what was written to history. No test asserts on a private helper, on which internal function ran, or on view structure. The frontend has exactly one equivalent seam: the IPC client module. Components are tested through it, never by reaching into Tauri directly.
 
-**Chunking and caching.** MyMemory caps a request at 500 bytes, and Vietnamese diacritics cost 2–3 bytes per character. Text is split on sentence boundaries into chunks that fit the byte budget, translated, and rejoined in order. Both providers are fronted by an in-memory LRU keyed by (text, direction, provider-agnostic), so a repeated Selection does not spend quota.
+**Engine contract.** The engine exposes four operations — quick translate a Selection, replace a Selection, translate text with a streaming event stream, and improve text with the same event stream shape. Every outcome is a typed success or a typed failure; there is no "silently did nothing" path. Streaming emits the same event shape for machine translation and model output so the views have one code path.
 
-**Direction resolution.** The Language Pair holds exactly one configured Target and one implied partner. If the Selection looks like the Target language, translate into the partner; otherwise into the Target. Detection uses the provider's detected language when available and a lightweight heuristic (diacritics, stop-words) before the request.
+**Capture and Replace.** Accessibility first, clipboard as fallback. Read: the focused element's selected-text attribute, then a synthesized copy with the clipboard saved, read, and restored. Write: the selected-text attribute only when it reports itself settable, otherwise the clipboard plus a synthesized paste, with the previous clipboard restored. The Accessibility attribute names are not generated by the Rust bindings and must be built from their string values. Clipboard restoration must compare the pasteboard change count before overwriting, because a naive save/restore is how clipboard-pollution bugs ship. Every path reports a typed failure. Secure event input is refused outright before any read.
 
-**The one test seam.** All non-UI behaviour lives behind a single engine. Views, panels, and the status item call only the engine; the engine receives its collaborators as ports:
+**The popup.** Quick Translate is a Tauri window converted into a non-activating panel: it may become key so that Enter and Escape reach the web view, but it must not activate the app, and it must float above normal windows, join every Space, and appear over a full-screen app. This is the highest-risk part of the design and is proven by a spike before the architecture is treated as settled. If the combination cannot be made to work, the fallback is a native popup drawing the translation without a web view, with the Translate Window remaining React.
 
-```swift
-protocol TranslatorEngine {
-    func quickTranslate(_ selection: Selection) async -> QuickTranslateOutcome
-    func replace(_ selection: Selection) async -> ReplaceOutcome
-    func translate(_ text: String, mode: Mode) -> AsyncStream<TranslationEvent>
-    func improve(_ text: String) -> AsyncStream<TranslationEvent>
-}
+**Startup.** The app opens as fast as the platform allows; there is no fixed millisecond budget in the spec, and none in the tests. The app pre-creates its windows hidden at launch and offers a start-at-login preference, so the expensive first start is paid once rather than on every shortcut. The menu-bar item and shortcuts must be registered before any window is shown.
 
-protocol SelectionAccess {           // Accessibility + clipboard, per ADR-0002
-    func read() throws -> Selection
-    func replace(_ selection: Selection, with text: String) throws
-}
+**IPC.** One thin client module on the frontend wraps every Tauri command with hand-written types; no component calls the Tauri API directly. Types may be generated from Rust later if drift actually appears, but v1 does not take the dependency. Commands carry the engine's operations and settings/history queries; events carry translation chunks, completion, errors, and provider status.
 
-protocol TranslationProvider {       // Azure, MyMemory, Groq
-    var name: String { get }
-    func translate(_ text: String, from: String?, to: String) async throws -> String
-}
+**Provider ladder.** Azure Translator F0 primary, MyMemory as the keyless fallback, Groq for Improve and for text the others cannot handle. Providers are tried in order; a provider that fails with a quota or authentication error is skipped for the rest of the session, and the response records which provider answered. The provider interface is a port so the ladder can change without touching the UI or the engine's callers.
 
-protocol SpeechOutput { func speak(_ text: String, language: String?) }
-protocol HistoryStore { func record(_ entry: HistoryEntry); func search(_ q: String) -> [HistoryEntry] }
-```
+**Chunking and caching.** MyMemory caps a request at 500 bytes and Vietnamese diacritics cost two to three bytes per character, so text is split on sentence boundaries into chunks that fit the budget, translated, and rejoined in order without loss. Both providers sit behind an in-memory LRU keyed by text and direction, so a repeated Selection never spends quota.
 
-Ports are injection points, not separate test seams: tests drive the engine and assert on what came back, never on which private helper ran.
+**Direction resolution.** The Language Pair holds exactly one configured Target and one implied partner. A Selection already in the Target language is translated into the partner; anything else into the Target. Detection uses the provider's reported language when available and a lightweight local heuristic before the request.
 
-**Streaming.** Machine translation returns a single result. Improve streams tokens over SSE from Groq; the engine emits the same event stream shape for both so the views have one code path.
+**Improve contract.** Improve asks for exactly two labelled parts: a corrected sentence that preserves the author's meaning and register, and a better sentence that is more natural or concise. Both are returned as separate fields, never as prose the view has to parse, and malformed model output is a typed error rather than a blank pane.
 
-**Improve contract.** Improve asks for exactly two labelled parts — a corrected sentence that preserves the author's meaning and register, and a better sentence that is more natural or concise. Both are returned as separate fields, not as prose the view has to parse.
+**Storage.** API keys in the Keychain, one item per provider. History in SQLite under Application Support, holding both sides of every translation, the provider, the mode, and a timestamp; rows older than 30 days are purged at launch and once a day. The Language Pair, shortcut bindings and the start-at-login preference live in a local settings file that is not synced.
 
-**Storage.** API keys in the Keychain, one item per provider. History in SQLite in Application Support, holding both sides of every translation, the provider, the mode, and a timestamp; rows older than 30 days are purged at launch and again daily. The Language Pair and shortcut bindings live in user defaults.
+**Shortcuts.** `⌃⌥D`, `⌃⌥R`, `⌃⌥S`, `⌃⌥E`, registered through Carbon so that no Input Monitoring permission is needed. Bindings are user-editable and persisted; a binding that cannot be registered surfaces a conflict rather than failing silently.
 
-**Shortcuts.** `⌃⌥D`, `⌃⌥R`, `⌃⌥S`, `⌃⌥E`, registered through Carbon so no Input Monitoring permission is needed. Bindings are user-editable and persisted; a binding that cannot be registered surfaces a conflict rather than failing silently.
+**UI.** React with TypeScript, Vite, Tailwind, and shadcn components for the Translate Window, settings, and onboarding. The popup uses the same design tokens but is deliberately built from minimal primitives: a dialog stack that traps focus is useful there, but nothing in the popup may depend on behaviour that activates the app. The visual language previously expressed in SwiftUI is re-created in Tailwind rather than carried over component by component.
 
-**Window and popup.** The popup is an `NSPanel` that cannot become key or main, floats above normal windows, joins all Spaces, and works in full screen. The Translate Window is a normal window that remembers its frame.
+**Signing and identity.** The bundle identifier stays `com.taitran.translator`, and every build is signed with a stable identity. macOS pins the Accessibility grant to the signature, so an ad-hoc signed build loses the grant on every rebuild while System Settings still shows the toggle enabled. The build produces a real `.app` bundle with the menu-bar-only plist key; packaging is part of the build, not a manual step.
 
-**Language coverage.** The Language Pair offers the languages both primary providers support; v1 ships with Vietnamese and English configured, with the rest selectable but untested.
+**Target platform.** macOS 14 or later for v1. The `core` crate is where the cross-platform promise is kept: it has no AppKit, no Tauri, and no macOS-specific dependency. A Windows milestone later adds a second platform crate and a second capture ladder; nothing in `core` is abstracted further than that today.
+
+**Documentation.** The Swift-era architecture records and the Swift sources are removed. New records describe the Rust core, the Tauri shell, the non-activating panel and the signing rule; the still-valid reasoning about Accessibility-first capture and the provider ladder is carried into them rather than lost. The glossary is unchanged, because the product's vocabulary did not change. This spec replaces the previous v1 spec in the same directory; the tickets are rewritten where they name Swift or AppKit and kept where they describe behaviour.
+
+**Contradiction to record.** This reverses the earlier decision to build the app in Swift; that record is deleted and replaced by ADR-0001 ("Rust core with a Tauri shell"). The constraints it identified — the popup must not steal focus from the app being typed in, and startup must not feel slow — are not dropped; they become requirements on a different implementation, and the popup one is proven by the spike.
 
 ## Testing Decisions
 
-**What a good test is here.** A test drives the engine through its public API with fake ports and asserts on observable outcomes: the translation returned, the error surfaced, the order in which ports were called, the bytes sent to a provider, what was written to history. Tests never assert on private helpers, view structure, or the number of internal calls that do not change behaviour.
+**What a good test is here.** A test drives the engine through its public API with fake ports and asserts on observable outcomes: the translation returned, the typed error, the order of port calls, the bytes sent to a provider, what was written to history. Tests never assert on private helpers, view structure, or internal call counts that do not change behaviour.
 
-**Seam.** One — the engine. Fakes exist only for the four ports and live in one shared test-support file: an in-memory `SelectionAccess` that can be told to succeed, fail, or require the clipboard path; a `TranslationProvider` that returns a scripted response or throws a scripted error; a recording `SpeechOutput`; an in-memory `HistoryStore`.
+**Seam.** One seam in Rust — the engine — with fakes only for the ports, kept in a single shared test-support module: a capture port that can be told to succeed, fail, or require the clipboard path; a provider that returns a scripted response or throws a scripted error; a recording speech port; an in-memory history store; an in-memory settings store; a fake credential store. One seam on the frontend — the IPC client — faked with scripted events. No UI component is tested through Tauri directly.
 
-**Modules under test.** Direction resolution including the same-language case; provider ladder fallback and the session-wide skip after a quota error; chunking of Vietnamese text against the 500-byte budget and lossless rejoin; the improve prompt round trip including malformed model output; history recording and purge; Replace gating (settable attribute versus clipboard path) as observed through the fake port.
+**Modules under test.** Direction resolution including the same-language case; provider ladder fallback and the session-wide skip after a quota error; chunking of Vietnamese text against the byte budget and lossless rejoin; the improve round trip including malformed model output; history recording and purge; Replace gating as observed through the fake capture port; cache hit behaviour including direction in the key; settings round trip.
 
-**Not unit-tested.** Real Accessibility behaviour, the synthesized `⌘C`/`⌘V` round trip, TCC prompts, and popup focus behaviour. These are verified by a manual checklist run against the built app, covering at minimum: Gmail in Chrome, Safari page text, VS Code, Terminal, Notes, a password field, and a full-screen app.
+**Frontend testing.** Only logic worth testing is tested: direction and error formatting, popup state transitions (opening, filled, error, dismissed), history search filtering. Components are not snapshot-tested.
 
-**Prior art.** None — v1 introduces the first test target. Use Swift Testing, one file per behaviour area, and keep the fakes in a single support file so the port shapes stay in one place.
+**Not unit-tested.** Real Accessibility behaviour, the synthesized copy and paste round trip, TCC prompts, panel focus, Space and full-screen behaviour, and start-at-login. These are verified by a manual checklist against the built app, covering at minimum: Gmail in Chrome, Safari page text, VS Code, Terminal, Notes, a password field, a full-screen app, and a second Space.
+
+**Prior art.** None — this is the project's first test target. One file per behaviour area, with the fakes in a single support module so the port shapes stay in one place.
 
 ## Out of Scope
 
-- Anything other than macOS.
-- App Store distribution, notarization, and auto-update (Sparkle comes later).
+- Windows and Linux in v1. The core is portable; no second platform ships yet.
+- App Store distribution, notarization, and auto-update.
 - On-device or offline models; the keyless fallback still needs a network.
 - OCR or screenshot translation.
 - Syncing history or settings between Macs.
 - User-managed glossaries or translation memory beyond the LRU cache.
-- Gemini is documented in ADR-0003 as the last resort but is not wired in v1.
-- Google Cloud Translation v2/v3, which needs billing before the first request.
-- A preferences window beyond the minimum needed to set the pair, keys, and shortcuts.
+- Gemini as a last-resort provider; it stays documented but unwired.
+- Google Cloud Translation, which needs billing before the first request.
+- A preferences window beyond the minimum needed to set the pair, keys, shortcuts and start-at-login.
+- An end-to-end UI test suite for the desktop app.
 
 ## Further Notes
 
-The current scaffold builds with `xcodebuild` and runs, but it is signed ad-hoc. Per ADR-0004, a stable self-signed code-signing identity must be in place before the first Accessibility grant, otherwise TCC pins permission to a `cdhash` that every rebuild changes and capture starts failing with `-1719` while the privacy toggle still looks enabled.
+The popup spike comes first and is the gate for everything else: one global shortcut, read the Selection, show a non-activating panel over a full-screen app without taking focus, press Enter, and watch the Replace land in the app that had focus. If that works, the architecture is settled. If it does not, the popup becomes native and the rest of the plan is unchanged.
 
-Read Aloud uses `AVSpeechSynthesizer`. macOS ships exactly one Vietnamese voice ("Linh") and its quality is poor; Read Aloud is expected to be used mostly on English, which is why the feature is scoped to the Selection and not to translations.
+It passed on 2026-11-11: the panel shows without activating the app, the web view receives keys, Enter and Escape work, typing returns to the host app when the panel closes, and the panel is on the active Space over a full-screen app. The one trap found — the web view must be made first responder, not its container view — is recorded in ADR-0005.
 
-Some apps never expose a settable selected-text attribute — browsers, Electron apps, and terminals among them — so the clipboard path is the normal path there, not an exception. Its correctness (restoring the clipboard, not racing the paste) matters more than the AX path's.
+The build is Rust plus a pre-built frontend; Node is a build-time dependency only, never a runtime one. Packaging must emit a menu-bar-only bundle and sign it with the stable identity, or every rebuild silently loses the Accessibility grant.
+
+Read Aloud uses the system speech synthesizer. macOS ships exactly one Vietnamese voice and its quality is poor, so Read Aloud is expected to be used mostly on English, which is why the feature is scoped to the Selection and not to translations.
+
+Some apps never expose a settable selected-text attribute — browsers, Electron apps, and terminals among them — so the clipboard path is the normal path there, not an exception. Its correctness (restoring the clipboard, not racing the paste) matters more than the Accessibility path's.

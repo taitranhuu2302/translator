@@ -1,0 +1,9 @@
+# The popup is a non-activating panel that still takes keys
+
+Quick Translate has two requirements that pull against each other. The popup must receive typing — Enter to Replace, Escape to dismiss — and it must not activate the app, because the app it is replacing text in has to keep its menu bar, its caret and its claim on being frontmost.
+
+A normal window cannot do both: becoming key activates its app. A non-activating `NSPanel` can, and that is what the popup is: a Tauri window converted through `tauri-nspanel`, with `NonactivatingPanel` in its style mask, `canBecomeKeyWindow` true, `canBecomeMainWindow` false, the floating level, and `CanJoinAllSpaces | FullScreenAuxiliary | IgnoresCycle` so it appears over a full-screen app and on whichever Space the user is on.
+
+This was the riskiest assumption in the design, and it was proven by a spike before anything else was built. The spike found one trap worth recording: `window.ns_view()` returns Wry's `WryWebViewParent`, a plain `NSView` wrapping the real `WryWebView`. A plain `NSView` forwards `keyDown:` up the responder chain rather than down to its subviews, so making the container first responder leaves the panel key, the app inactive, and every keystroke dead. The popup must walk the subviews, find the web view, and make that the first responder after showing.
+
+**Consequences:** while the popup is open, keyboard input goes to it rather than to the app behind it — that is the point, and typing returns to the source app as soon as the popup closes. The subview search depends on Wry's view hierarchy, so a Tauri upgrade is the moment to re-run the spike's checks. If a future version makes the combination impossible, the fallback is a native AppKit popup drawing the translation without a web view, with the Translate Window staying in React.

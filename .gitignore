@@ -3,9 +3,16 @@
 # Build output
 build/
 DerivedData/
+target/
 
 # Xcode user state
 xcuserdata/
 *.xcuserstate
 *.xcscmblueprint
 *.xccheckout
+
+# Node
+node_modules/
+
+# Tauri generated
+**/gen/schemas/
