@@ -1,0 +1,19 @@
+[package]
+name = "translator-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tauri v2 shell owning the engine and hosting the React UI"
+
+[[bin]]
+name = "translator"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+serde = { workspace = true }
+translator-core = { workspace = true }
+translator-platform-macos = { workspace = true }

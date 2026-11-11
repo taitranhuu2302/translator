@@ -1,0 +1,10 @@
+[package]
+name = "translator-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Translator product logic and port traits, with no platform dependency"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = "2"

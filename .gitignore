@@ -5,6 +5,7 @@ target/
 
 # Node
 node_modules/
+ui/dist/
 
 # Tauri generated
 **/gen/schemas/
