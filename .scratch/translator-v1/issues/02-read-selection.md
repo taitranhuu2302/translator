@@ -62,8 +62,16 @@ the onboarding flag once and only then.
 Runtime behaviour — real Accessibility, secure input and the clipboard — is
 manual; the steps are in
 [`../checks/02-read-selection-manual.md`](../checks/02-read-selection-manual.md),
-and all 15 cases passed on the signed bundle on 2026-11-13. The
-grant-survives-a-rebuild check owed by ticket 01 is still open: it needs one
-grant, then a `./scripts/build.sh` rebuild, then a selection read without
-granting again.
+and cases 1–15 passed on the signed bundle on 2026-11-13. Cases 16–17 were
+added by the review pass and have not been run. The grant-survives-a-rebuild
+check owed by ticket 01 is still open: it needs one grant, then a
+`./scripts/build.sh` rebuild, then a selection read without granting again.
+
+## Comments
+
+- 2026-11-14 — Review pass, same commit as the run book: the onboarding now offers **Grant
+  Accessibility…** and **Open Privacy Settings**, shows "Accessibility is
+  granted." from the window's own permission check (including when a rebuild
+  kept the grant), and drops the buttons once the grant is observed. Manual
+  cases 16–17 cover both states; the app was not launched.
 

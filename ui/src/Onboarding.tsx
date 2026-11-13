@@ -28,14 +28,16 @@ const SHORTCUTS: { key: keyof ShortcutBindings; name: string; action: string }[]
 
 export function Onboarding({
   shortcuts,
+  granted: grantedByApp,
   onDone,
 }: {
   shortcuts: ShortcutBindings;
+  granted: boolean;
   onDone: () => Promise<void>;
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [granted, setGranted] = useState(false);
+  const [granted, setGranted] = useState(grantedByApp);
   const [grantProblem, setGrantProblem] = useState<string | null>(null);
 
   const finish = async () => {
@@ -49,22 +51,11 @@ export function Onboarding({
     }
   };
 
-  // The permission can outlive the settings file (a rebuild keeps the grant), so
-  // a fresh onboarding must not ask for something already granted.
+  // The window re-checks the permission whenever it comes back to the front,
+  // so returning from System Settings updates the card without a click here.
   useEffect(() => {
-    let cancelled = false;
-    ipc
-      .accessibilityGranted()
-      .then((isGranted) => {
-        if (!cancelled) setGranted(isGranted);
-      })
-      .catch(() => {
-        // Leave it unknown; both paths stay offered.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    setGranted(grantedByApp);
+  }, [grantedByApp]);
 
   // Asking macOS shows its own prompt; the answer is read back once, after the
   // prompt, so the surface never claims a permission it has not observed.

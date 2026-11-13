@@ -26,7 +26,7 @@ icon, no ⌘Tab entry.
 
 | # | Case | Steps | Expected |
 | --- | --- | --- | --- |
-| 1 | Onboarding on first launch | Reset the settings file, then launch. | The Translate Window opens with a "Welcome to Translator" card listing four shortcuts — ⌃⌥D Quick Translate, ⌃⌥R Replace, ⌃⌥S Read Aloud, ⌃⌥E Translate Window — each with a one-line description. |
+| 1 | Onboarding on first launch | Reset the settings file, then launch. | The Translate Window opens with a "Welcome to Translator" card listing four shortcuts — ⌃⌥D Quick Translate, ⌃⌥R Replace, ⌃⌥S Read Aloud, ⌃⌥E Translate Window — each with a one-line description. While Accessibility is missing, the card also offers **Grant Accessibility…** and **Open Privacy Settings**. |
 | 2 | Onboarding stays dismissed | In case 1 click **Got it**, quit, relaunch. | No window opens; the app sits in the menu bar only. Pressing ⌃⌥E opens the window with no onboarding. |
 | 3 | Notes | Select a paragraph in Notes, press ⌃⌥E. | The window opens with that paragraph in the left pane and no notice. |
 | 4 | Chrome page text | Select text on a web page in Chrome (not in an input), press ⌃⌥E. | Same as case 3. If Chrome exposes no Accessibility text, the clipboard path covers it and the result is still the same. |
@@ -41,6 +41,8 @@ icon, no ⌘Tab entry.
 | 13 | Clipboard fallback | Use an app that does not expose text through Accessibility (e.g. a page rendered inside a canvas, or Firefox). Select text, press ⌃⌥E. | The text still arrives through the ⌘C fallback, and your clipboard is restored. |
 | 14 | Focus is not stolen | With text selected in Notes, note where the caret is, press ⌃⌥E. | Notes keeps its selection until the Translator window appears; the captured text is the Notes selection, never Translator's own. |
 | 15 | Menu bar entry | Click the menu bar icon, choose **Open Translate Window**. | The window opens and captures the selection from the app that had focus before the menu was clicked. |
+| 16 | Onboarding offers the grant | `tccutil reset Accessibility com.taitran.translator`, delete `settings.json`, launch. | The card shows **Grant Accessibility…** and **Open Privacy Settings**. The first asks macOS for the permission; the second opens the Accessibility pane. Enable Translator there and return to Translator: the card says "Accessibility is granted." and the two buttons disappear without a relaunch. |
+| 17 | Onboarding knows an existing grant | Keep the Accessibility grant (do not reset TCC), delete `settings.json`, launch. | The card says "Accessibility is granted." from the start and offers no grant buttons. |
 
 ⌃⌥D, ⌃⌥R and ⌃⌥S appear in the onboarding because they are the app's shortcuts,
 but only ⌃⌥E is wired up in this ticket; the others arrive in tickets 03–05.
@@ -67,3 +69,5 @@ Anything failing in future runs becomes a bug ticket.
 | 13 | | |
 | 14 | | |
 | 15 | | |
+| 16 | | |
+| 17 | | |

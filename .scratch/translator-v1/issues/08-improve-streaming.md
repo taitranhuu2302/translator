@@ -115,12 +115,27 @@ Proofs for the ticked boxes:
   could not be tried at all on a fresh install. Ticket 10 still owns the full
   Settings view; this is the same save/clear surface Azure already had, with the
   status wording kept pure in `providerStatus.ts`.
+- **Groq is also the ladder's translation fallback (review pass).** The spec's
+  ladder ends with “Groq for Improve and for text the others cannot handle,” but
+  the first cut answered `NotConfigured` from `translate`. `translate` now sends
+  one non-streaming, temperature-0 chat completion naming the Target (and the
+  Source only when the engine resolved one), parses `choices[0].message.content`
+  strictly and shares the transport/auth/quota mapping with Improve. A keyless
+  Groq still answers `NotConfigured`, never `MissingKey`, so a translation the
+  keyless providers could not handle reports the real ladder failure. The ladder
+  test runs the real provider behind the fake HTTP client and proves
+  Azure-unconfigured + MyMemory-down falls through to Groq.
 - **Not verified here:** a real Groq answer, ureq's streaming timing on a live
   network, the model's actual prose, and every visual property of the two
   sections. Those are the manual checks, and the app was not launched.
 
 ## Comments
 
+- 2026-11-14 — Review pass: Groq now translates as the ladder's last rung
+  (`6d53ee9`), closing the “text the others cannot handle” half of the spec's
+  ladder. The manual Groq checks still apply; a translation while Azure is
+  unconfigured and MyMemory is rate-limited is the new manual case 21 in
+  [`../checks/08-improve-manual.md`](../checks/08-improve-manual.md).
 - 2026-11-14 — Implemented in `101b9fc`. The real model, throttled streaming and
   clipboard behaviour still need a run on the signed bundle:
   [`../checks/08-improve-manual.md`](../checks/08-improve-manual.md) covers the

@@ -64,6 +64,7 @@ log stream --style compact --predicate 'process == "Translator"'
 | 19 | History is recorded through the same path | Translate from the window, then use the history search once ticket 09 lands. | The entry exists with the source text, the translation and `Translate` as the mode. Until ticket 09, `translate_text_records_what_it_translated_in_history` is the proof. |
 | 20 | A capture failure does not break the typed panes | Revoke Accessibility (or focus a secure field and press ⌃⌥E), then type in the window. | The notice at the top explains the capture failure; the source pane is still editable and Enter still translates typed text. |
 | 21 | Long text does not break the layout | Paste several paragraphs and translate. | The result pane scrolls, the panes keep their side-by-side layout, and the action buttons stay visible. |
+| 22 | The shortcuts act on the window's own Selection | Select a phrase in the result pane and press ⌃⌥D, then dismiss it. Select a phrase in the source pane and press ⌃⌥S. | The popup opens beside the cursor with the result-pane phrase translated, exactly as it would from another app, and the window keeps its selection and its input. Read Aloud speaks the source-pane phrase. No shortcut ever acts on Translator's own interface text. |
 
 Case 14 needs a Retina display and case 15 needs a second display; if either
 cannot be arranged, record that in the results rather than marking it passed.
@@ -96,3 +97,4 @@ a bug ticket.
 | 19 | | |
 | 20 | | |
 | 21 | | |
+| 22 | | |

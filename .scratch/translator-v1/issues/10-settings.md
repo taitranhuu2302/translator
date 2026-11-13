@@ -18,7 +18,6 @@ The app was **never launched** while building this ticket. The boxes are proven
 by the automated suites below; the parts that need a real window, a real
 registration conflict and a real settings file are written up in
 [`../checks/10-settings-manual.md`](../checks/10-settings-manual.md).
-
 | Command | Result |
 | --- | --- |
 | `npm --prefix ui run test` | 75 passed — 14 new: 7 `captureBinding` tests (modifier-only ignored, letter/digit/function mapping, modifier order, the allowed modifier-less capture, unsupported keys), 1 `withShortcut`, 5 `settingsView` tests (direction sentence, a language named by its code, the target/partner rule and the unchanged case), and 1 MyMemory status line. |
@@ -28,6 +27,14 @@ registration conflict and a real settings file are written up in
 | `cargo test -p translator-platform-macos` | 22 passed — unchanged |
 | `cargo clippy --workspace --all-targets` | clean |
 | `./scripts/test.sh` | passed (typecheck, vitest, IPC boundary, build, cargo, doctests) |
+
+After the code-review pass (2026-11-14) the same gate passes with **75** UI
+tests, **30** app tests, **120** core unit tests, **3** dependency-boundary
+tests, **63** engine-seam tests and **22** platform tests; `cargo clippy
+--workspace --all-targets -- -D warnings` is clean. The nine new app tests are
+six `tray_entries` cases (four action rows with live accelerators, the
+permission row in both states, Quit last) plus `launch_problem` and
+`forget_conflict`.
 
 Proofs for the ticked boxes:
 
@@ -122,6 +129,28 @@ Proofs for the ticked boxes:
   shipped combination that a rebind had taken is free again. A refused binding
   is listed one by one; a failed settings write is surfaced rather than hidden,
   because relaunching would then restore the previous file.
+- **Start at login uses the LaunchAgent the plugin installs.** A review pass
+  added the spec's missing preference: `tauri-plugin-autostart` 2.7 with
+  `MacosLauncher::LaunchAgent`, wrapped by `start_at_login_enabled` (the actual
+  state, never the stored field) and `set_start_at_login`. The command enables
+  or disables the login item, then saves `settings.start_at_login`; a failed
+  save puts the login item back, so the file and macOS never disagree after a
+  relaunch. The checkbox starts from the plugin's answer, so a login item the
+  user removed by hand reads as off. The app never enables itself at launch.
+- **The tray lists the four actions and the permission.** The menu-bar item is
+  no longer just “Open Translate Window”: `tray_entries` yields Quick Translate,
+  Replace Selection, Read Aloud and Open Translate Window with their live
+  combinations, then the Accessibility row (clicking the missing-permission row
+  opens the pane), then Quit. Clicking an action runs the same handler as its
+  global shortcut. The menu is rebuilt on the main thread after a rebind or
+  reset, and when `accessibility_granted` observes a change, so the tray never
+  keeps a stale combination. The pure entry list is tested without AppKit.
+- **Launch-time refusals are not silent.** macOS can refuse a saved binding at
+  startup; `setup` now collects each refusal into `launch_conflicts` with the
+  same wording reset uses, and `shortcut_conflicts` feeds a warning above the
+  Shortcuts rows. A successful rebind drops that action's warning, and reset
+  clears the list. A broken binding can therefore be seen and fixed in the
+  surface instead of only in the log.
 - **Not verified here:** the rendered four-tab surface, real Carbon conflicts
   with another app, relaunch persistence on the real settings path, the tray
   label updating, the Keychain rows refreshing, and the read-only settings
@@ -129,6 +158,11 @@ Proofs for the ticked boxes:
 
 ## Comments
 
+- 2026-11-14 — Review pass in `9539a77` and `8bf53fd` closed four gaps the
+  two-axis review found: start at login, the tray content, launch-time shortcut
+  conflicts, and the onboarding's Accessibility actions (ticket 02). The manual
+  checks grew cases 24–29 for the login item, the tray menu, the permission row
+  and a refused-at-launch binding; the app was still not launched.
 - 2026-11-14 — Implemented in `819a725`. A real window, real Carbon
   registrations and the real settings file still need a run on the signed
   bundle: [`../checks/10-settings-manual.md`](../checks/10-settings-manual.md)

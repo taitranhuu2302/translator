@@ -97,8 +97,9 @@ sudo tcpdump -n -i any '(host api.groq.com or host api.cognitive.microsofttransl
 | 16 | A row exactly under 30 days survives | Quit. Age another row to 29 days. Relaunch and open **History**. | The 29-day row is still listed. Only rows strictly older than 30 days disappear. |
 | 17 | History survives a restart | Translate or improve something, quit the app, relaunch, open **History**. | The entry is still there, in the same newest-first order, with its original age. Reopening it still restores the result. |
 | 18 | Browsing and reopening stay local | Run the `tcpdump` capture, open **History**, type several searches, clear them, and click translate and improve entries. | tcpdump shows no connection to `api.groq.com`, `api.cognitive.microsofttranslator.com` or `api.mymemory.translated.net`. Searching and reopening never contact a provider. |
-| 19 | An old Improve row without a corrected part still opens | With an Improve row showing, quit, run the "corrected = NULL" SQL recipe, relaunch, click that row. | The view opens in **Improve** with **Better** restored and **Corrected** empty. Nothing crashes and the input is intact. |
-| 20 | Newest entries come first | Make three entries a few seconds apart, open **History**, clear the search. | The newest is at the top and the oldest at the bottom. Rows from different modes and both sides are interleaved by time, not grouped by mode. |
+| 19 | Every translation stores its direction | With the shipped pair (Vietnamese into English), translate `Hello` in the window. Run `sqlite3 -header -column "$DB" "SELECT source, direction_source, direction_target FROM history ORDER BY id DESC LIMIT 1;"`. Then **Swap**, translate `Xin chào`, and run the query again. | The first row stores `direction_source = en` and `direction_target = vi`; the swapped row stores `vi` → `en`. Every later row also carries both columns — none is `NULL` — so reopening never has to fall back to the current Target. |
+| 20 | An old Improve row without a corrected part still opens | With an Improve row showing, quit, run the "corrected = NULL" SQL recipe, relaunch, click that row. | The view opens in **Improve** with **Better** restored and **Corrected** empty. Nothing crashes and the input is intact. |
+| 21 | Newest entries come first | Make three entries a few seconds apart, open **History**, clear the search. | The newest is at the top and the oldest at the bottom. Rows from different modes and both sides are interleaved by time, not grouped by mode. |
 
 The daily repeat of the purge is not practical to observe by hand (it runs 24
 hours after launch, on the background thread). Case 15 proves the launch purge
@@ -132,3 +133,4 @@ a bug ticket.
 | 18 | | |
 | 19 | | |
 | 20 | | |
+| 21 | | |

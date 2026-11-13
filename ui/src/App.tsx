@@ -656,6 +656,7 @@ export function App() {
       {settings && !settings.onboarding_seen ? (
         <Onboarding
           shortcuts={settings.shortcuts}
+          granted={granted === true}
           onDone={finishOnboarding}
         />
       ) : null}

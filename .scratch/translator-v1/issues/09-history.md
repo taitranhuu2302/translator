@@ -71,11 +71,14 @@ Proofs for the ticked boxes:
   and `corrected: Option<String>` are both `#[serde(default)]`, so a row
   written before this ticket still loads; the model has a test for that shape.
   All literals in production and the fakes were updated.
-- **Direction is recorded only when it is known.** For a window translation the
-  explicit `Direction` is kept; otherwise the provider's `detected_source` plus
-  the translation target forms it. When the provider detects nothing, the entry
-  has `direction: None` rather than a guess. This is what lets reopen fall back
-  to the saved pair's target.
+- **Every translation records the direction it ran in.** The first cut kept a
+  direction only for an explicit window direction or a provider detection, so
+  the normal path wrote `direction: None` and reopening fell back to the saved
+  Target. The review pass corrected that: `resolve_translation` now returns the
+  pair-resolved `Direction` with the translation, and every translation path
+  (window, Quick Translate, Replace, popup Enter) stores it. The local guess and
+  the pair remain the only source when a provider detects nothing, which is
+  what keeps a third-language Selection in the pair's direction.
 - **Improve is recorded exactly once through each entry point.** Both
   `translate_text_in(..., Mode::Improve, ...)` and `improve_streaming` record
   after the provider validates the pair. The old seam test that asserted
@@ -129,6 +132,11 @@ Proofs for the ticked boxes:
 
 ## Comments
 
+- 2026-11-14 — Review pass: the normal translation paths now record the
+  direction they resolved (`6d53ee9`). `a_normal_translation_in_each_direction_records_and_reopens_the_direction_it_used`
+  proves both directions through the window, and the earlier test that asserted
+  a normal row had no direction was replaced with the corrected expectation.
+  Manual case 19 reads the two stored columns directly.
 - 2026-11-14 — Implemented in `0f3112d`. A real window, the real SQLite file
   under Application Support, restart persistence and a `tcpdump` privacy
   capture still need a run on the signed bundle:

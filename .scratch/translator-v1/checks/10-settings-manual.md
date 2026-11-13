@@ -6,8 +6,10 @@ round trips), the settings round trip through the engine, the reset's effect on
 the saved document, and the capture and Language Pair rules in TypeScript. Only a
 real window can show that the fourth surface renders, that a pressed combination
 is actually registered with macOS and outlives a relaunch, that a conflict with
-another app is reported at the moment it is set, that the tray label follows the
-Translate Window binding, and that the Keychain rows refresh. `./scripts/build.sh`
+another app is reported at the moment it is set, that the tray menu lists all
+four shortcuts with their live combinations and the Accessibility state, that
+the login item is really created and removed, and that the Keychain rows
+refresh. `./scripts/build.sh`
 must have produced a clean, signed `target/bundle/Translator.app` first. The app
 was **never launched** while building this ticket.
 
@@ -53,6 +55,13 @@ security delete-generic-password -s com.taitran.translator -a azure 2>/dev/null 
 security delete-generic-password -s com.taitran.translator -a groq 2>/dev/null || true
 ```
 
+Forget the login item without opening the app:
+
+```bash
+ls "$HOME/Library/LaunchAgents" | grep -i translator
+rm -f "$HOME/Library/LaunchAgents"/*ranslator*.plist   # only after quitting the app
+```
+
 To watch what the app logs while testing (a refused registration is logged, the
 conflict words come back to the surface):
 
@@ -87,6 +96,12 @@ log stream --style compact --predicate 'process == "Translator"'
 | 21 | History and Improve survive a trip to Settings | Translate something, open **History**, note the list; click **Settings**, then back to **History**; also improve a sentence and visit Settings and return to **Improve**. | The history list and the improved parts are exactly as they were; the input text and direction are unchanged. |
 | 22 | A failed settings write is refused and rolled back | Quit, `chmod 500` the settings directory, relaunch, try to rebind Quick Translate. | The row keeps its old binding and shows exactly "The shortcut was not changed: the settings file could not be written." The old shortcut still works. Restore `chmod 700` afterwards. |
 | 23 | A reset whose settings write fails says so | With the directory still read-only, reset. | The four defaults are live and listed, and the notice says the settings file could not be written, so relaunching restores the old settings. Restore `chmod 700` afterwards. |
+| 24 | Start at login can be turned on | In **Settings → Startup**, tick **Start Translator at login**. | The box stays ticked, `settings.json` has `"start_at_login": true`, and `ls ~/Library/LaunchAgents` now lists a Translator plist. Log out and back in: Translator starts with only its menu bar icon (the onboarding is already dismissed). |
+| 25 | Start at login can be turned off | Untick **Start Translator at login**. | The box clears, `settings.json` has `"start_at_login": false`, the plist is gone, and logging out and back in does not start Translator. |
+| 26 | The checkbox reflects macOS, not just the file | With the box ticked, quit the app, remove its plist with the reset command above, relaunch and open **Settings**. | The box is unticked even though the file still said true. Ticking it again recreates the plist. Removing Translator from System Settings → General → Login Items is reflected the same way on the next visit. |
+| 27 | The tray lists every shortcut and follows changes | Rebind one action, then click the menu bar icon. | The menu shows Quick Translate, Replace Selection, Read Aloud and Open Translate Window, each with its current combination, then a separator, the Accessibility row, a separator and Quit Translator. Clicking each action row does what that shortcut does. Rebind another action and open the menu again: the new combination is shown. |
+| 28 | The tray shows the permission and opens its pane | `tccutil reset Accessibility com.taitran.translator`, quit and relaunch. Open the menu bar item. | The row reads "Accessibility: Not granted — Open Settings…". Clicking it opens System Settings at Privacy & Security → Accessibility. Grant Translator there, then bring the window to the front once: the row becomes "Accessibility: Granted" without a relaunch. |
+| 29 | A shortcut macOS refused at launch is reported | Bind ⌃⌥D in another app, quit and relaunch Translator, open **Settings**. | Above the Shortcuts rows a warning names **Quick Translate** and ⌃⌥D with macOS's refusal; the row still shows ⌃⌥D. Remove the other app's binding, rebind Quick Translate, and the warning disappears; the new shortcut works. |
 
 ## Results
 
@@ -118,3 +133,9 @@ a bug ticket.
 | 21 | | |
 | 22 | | |
 | 23 | | |
+| 24 | | |
+| 25 | | |
+| 26 | | |
+| 27 | | |
+| 28 | | |
+| 29 | | |
