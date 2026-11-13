@@ -17,10 +17,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use translator_core::{
-    AzureProvider, CachedProvider, CaptureError, Direction, EngineError, HistoryEntry, Mode,
-    MyMemoryProvider, PopupPrefill, ProviderId, ProviderLadder, ProviderStatus, QuickTranslation,
-    ReadAloud, Replacement, Selection, Settings, SettingsStore, SpeechError, TextOutcome,
-    Translation, TranslatorEngine, UreqHttpClient,
+    AzureProvider, CachedProvider, CaptureError, Direction, EngineError, GroqProvider,
+    HistoryEntry, ImproveDelta, ImprovePart, Mode, MyMemoryProvider, PopupPrefill, ProviderId,
+    ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud, Replacement, Selection, Settings,
+    SettingsStore, SpeechError, TextOutcome, Translation, TranslatorEngine, UreqHttpClient,
 };
 use translator_platform_macos::{
     clipboard, MacCredentialStore, MacHistoryStore, MacSelectionCapture, MacSettingsStore,
@@ -108,7 +108,10 @@ impl AppState {
     }
 
     fn take_popup_prefill(&self) -> Option<PopupPrefill> {
-        self.popup_prefill.lock().expect("popup prefill lock").take()
+        self.popup_prefill
+            .lock()
+            .expect("popup prefill lock")
+            .take()
     }
 
     fn route(&self, shortcut: &Shortcut) -> Option<Route> {
@@ -127,6 +130,29 @@ impl AppState {
 enum Prefill {
     Selection(Selection),
     Failure(EngineError),
+}
+
+/// One streamed piece of a result. Translation and Improve share one event
+/// shape so the view listens once; only Improve sets `part`, and its absence
+/// means the whole chunk belongs to the single translation pane.
+#[derive(Clone, serde::Serialize)]
+struct TranslationChunkPayload {
+    request_id: String,
+    text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    part: Option<ImprovePart>,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct TranslationDonePayload {
+    request_id: String,
+    outcome: TextOutcome,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct TranslationErrorPayload {
+    request_id: String,
+    error: EngineError,
 }
 
 // Every command is `async` so Tauri runs it on its worker threads. A synchronous
@@ -187,6 +213,57 @@ async fn translate_text(
     direction: Option<Direction>,
 ) -> Result<TextOutcome, EngineError> {
     state.engine.translate_text_in(&text, mode, direction)
+}
+
+/// The Translate Window's Improve mode: corrected and better, streamed into the
+/// pane as the model writes them. The request runs on its own thread (a model
+/// answer is slow and blocking), and every event carries the request id the view
+/// chose, so a stream from a superseded request can be ignored instead of
+/// landing in the wrong pane.
+///
+/// Chunks and done both carry the model's fields: the view appends chunks for
+/// progress, then replaces both fields from `done`, which is the only value the
+/// provider strictly validated.
+#[tauri::command]
+async fn improve_text(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request_id: String,
+    text: String,
+) -> Result<(), ()> {
+    let engine = Arc::clone(&state.engine);
+    std::thread::spawn(move || {
+        let chunk_app = app.clone();
+        let chunk_request = request_id.clone();
+        let mut sink = move |delta: &ImproveDelta| {
+            let _ = chunk_app.emit(
+                "translation-chunk",
+                TranslationChunkPayload {
+                    request_id: chunk_request.clone(),
+                    text: delta.text.clone(),
+                    part: Some(delta.part),
+                },
+            );
+        };
+        match engine.improve_streaming(&text, &mut sink) {
+            Ok(improvement) => {
+                let _ = app.emit(
+                    "translation-done",
+                    TranslationDonePayload {
+                        request_id,
+                        outcome: TextOutcome::Improvement(improvement),
+                    },
+                );
+            }
+            Err(error) => {
+                let _ = app.emit(
+                    "translation-error",
+                    TranslationErrorPayload { request_id, error },
+                );
+            }
+        }
+    });
+    Ok(())
 }
 
 #[tauri::command]
@@ -470,10 +547,12 @@ fn read_aloud_selection(app: &AppHandle) {
 /// must never look like it worked.
 fn replace_selection_directly(app: &AppHandle) {
     let app = app.clone();
-    std::thread::spawn(move || match app.state::<AppState>().engine.replace_selection() {
-        Ok(_) => {}
-        Err(error) => show_replace_failure(&app, &error),
-    });
+    std::thread::spawn(
+        move || match app.state::<AppState>().engine.replace_selection() {
+            Ok(_) => {}
+            Err(error) => show_replace_failure(&app, &error),
+        },
+    );
 }
 
 fn show_replace_failure(app: &AppHandle, error: &EngineError) {
@@ -550,14 +629,7 @@ fn build_tray(app: &AppHandle, accelerator: &str) -> tauri::Result<()> {
         Some(accelerator),
     )?;
     let quit = MenuItem::with_id(app, "quit", "Quit Translator", true, None::<&str>)?;
-    let menu = Menu::with_items(
-        app,
-        &[
-            &open,
-            &PredefinedMenuItem::separator(app)?,
-            &quit,
-        ],
-    )?;
+    let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
 
     // The 1024 px app icon is scaled to the menu bar by the tray implementation.
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
@@ -593,10 +665,15 @@ fn main() {
                 .unwrap_or_default()
         }),
     ));
-    let my_memory = Arc::new(MyMemoryProvider::new(http));
+    let my_memory = Arc::new(MyMemoryProvider::new(http.clone()));
+    // Improve's model rung. It translates nothing, so it sits last: translation
+    // never waits on it, and Improve falls through Azure and MyMemory's
+    // `NotConfigured` to reach it.
+    let groq = Arc::new(GroqProvider::new(http, credentials.clone()));
     let ladder = Arc::new(ProviderLadder::new(vec![
         (ProviderId::Azure, azure),
         (ProviderId::MyMemory, my_memory),
+        (ProviderId::Groq, groq),
     ]));
     let provider = Arc::new(CachedProvider::new(ladder, TRANSLATION_CACHE_SIZE));
 
@@ -640,6 +717,7 @@ fn main() {
             replace_with_translation,
             read_aloud,
             translate_text,
+            improve_text,
             provider_status,
             save_provider_key,
             clear_provider_key,
@@ -746,10 +824,7 @@ mod tests {
             routes.route(&shortcut("Ctrl+Alt+D")),
             Some(Route::QuickTranslate)
         );
-        assert_eq!(
-            routes.route(&shortcut("Ctrl+Alt+R")),
-            Some(Route::Replace)
-        );
+        assert_eq!(routes.route(&shortcut("Ctrl+Alt+R")), Some(Route::Replace));
         assert_eq!(
             routes.route(&shortcut("Ctrl+Alt+E")),
             Some(Route::TranslateWindow)

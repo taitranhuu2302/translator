@@ -17,20 +17,22 @@ pub mod testing;
 pub use chunking::{chunk_text, join_chunks, MAX_CHUNK_CHARS};
 pub use engine::TranslatorEngine;
 pub use error::{
-    AuthFailure, CaptureError, CredentialError, EngineError, HistoryError, HttpError, ProviderError,
-    SettingsError, SpeechError,
+    AuthFailure, CaptureError, CredentialError, EngineError, HistoryError, HttpError,
+    ProviderError, SettingsError, SpeechError,
 };
 pub use http::UreqHttpClient;
 pub use language::{guess_language, Direction, Language, LanguagePair};
 pub use model::{
-    HistoryEntry, Improvement, Mode, PopupPrefill, ProviderId, ProviderStatus, ProviderTranslation,
-    QuickTranslation, ReadAloud, Replacement, Selection, Settings, ShortcutBindings, TextOutcome,
-    Timestamp, Translation, utf16_length,
+    utf16_length, HistoryEntry, ImproveDelta, ImprovePart, Improvement, Mode, PopupPrefill,
+    ProviderId, ProviderStatus, ProviderTranslation, QuickTranslation, ReadAloud, Replacement,
+    Selection, Settings, ShortcutBindings, TextOutcome, Timestamp, Translation,
 };
 pub use ports::{
-    CredentialStore, HistoryStore, HttpClient, HttpMethod, HttpRequest, HttpResponse, ImproveRequest,
-    SelectionCapture, SettingsStore, SpeechOutput, TranslateRequest, TranslationProvider,
+    CredentialStore, HistoryStore, HttpClient, HttpMethod, HttpRequest, HttpResponse,
+    ImproveRequest, SelectionCapture, SettingsStore, SpeechOutput, TranslateRequest,
+    TranslationProvider,
 };
 pub use providers::{
-    AzureProvider, CachedProvider, MyMemoryProvider, ProviderLadder, UnconfiguredProvider,
+    AzureProvider, CachedProvider, GroqProvider, ImprovementStream, MyMemoryProvider,
+    ProviderLadder, UnconfiguredProvider,
 };

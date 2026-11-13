@@ -46,7 +46,15 @@ pub enum AuthFailure {
 #[serde(rename_all = "snake_case")]
 pub enum ProviderError {
     NotConfigured,
-    QuotaExceeded { provider: ProviderId },
+    /// The provider needs a key it does not have. It names the provider, because
+    /// "something is not configured" leaves the user hunting; the ladder still
+    /// falls through to the next rung and never skips this one for the session.
+    MissingKey {
+        provider: ProviderId,
+    },
+    QuotaExceeded {
+        provider: ProviderId,
+    },
     AuthenticationFailed {
         provider: ProviderId,
         /// Older messages did not carry the cause; a missing one is a bad key.
@@ -62,7 +70,9 @@ pub enum ProviderError {
         provider: ProviderId,
         message: String,
     },
-    Unavailable { reason: String },
+    Unavailable {
+        reason: String,
+    },
 }
 
 impl std::fmt::Display for ProviderError {
@@ -70,6 +80,9 @@ impl std::fmt::Display for ProviderError {
         match self {
             ProviderError::NotConfigured => {
                 formatter.write_str("no translation provider is configured")
+            }
+            ProviderError::MissingKey { provider } => {
+                write!(formatter, "{provider} needs an API key. Add one in Settings.")
             }
             ProviderError::QuotaExceeded { provider } => write!(
                 formatter,
@@ -205,11 +218,20 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_key_names_the_provider_and_the_fix() {
+        let message = ProviderError::MissingKey {
+            provider: ProviderId::Groq,
+        }
+        .to_string();
+
+        assert_eq!(message, "Groq needs an API key. Add one in Settings.");
+    }
+
+    #[test]
     fn an_authentication_failure_written_before_the_cause_existed_reads_as_a_bad_key() {
-        let error: ProviderError = serde_json::from_str(
-            r#"{"authentication_failed":{"provider":"azure"}}"#,
-        )
-        .expect("the older shape still deserializes");
+        let error: ProviderError =
+            serde_json::from_str(r#"{"authentication_failed":{"provider":"azure"}}"#)
+                .expect("the older shape still deserializes");
 
         assert_eq!(
             error,

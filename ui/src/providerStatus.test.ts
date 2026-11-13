@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ProviderStatus, Settings } from "./ipc";
-import { azureStatusLine, regionChanged, withAzureRegion } from "./providerStatus";
+import { azureStatusLine, groqStatusLine, regionChanged, withAzureRegion } from "./providerStatus";
 
 const status = (overrides: Partial<ProviderStatus> = {}): ProviderStatus => ({
   azure_configured: false,
@@ -44,6 +44,30 @@ describe("the provider settings status", () => {
     const line = azureStatusLine(
       status({ azure_configured: true, azure_skipped: true }),
     );
+
+    expect(line.toLowerCase()).toContain("skipped");
+    expect(line.toLowerCase()).toContain("new key");
+  });
+});
+
+describe("the Groq status line", () => {
+  it("names Groq as the key Improve needs, without pretending translation broke", () => {
+    const line = groqStatusLine(status());
+
+    expect(line).toContain("Groq");
+    expect(line.toLowerCase()).toContain("improve");
+    expect(line).toContain("translation works without one");
+  });
+
+  it("says a saved key is used and that translation never waits on it", () => {
+    const line = groqStatusLine(status({ groq_configured: true }));
+
+    expect(line).toContain("Key saved");
+    expect(line).toContain("Groq");
+  });
+
+  it("reports a skipped Groq and says a new key is tried again", () => {
+    const line = groqStatusLine(status({ groq_configured: true, groq_skipped: true }));
 
     expect(line.toLowerCase()).toContain("skipped");
     expect(line.toLowerCase()).toContain("new key");

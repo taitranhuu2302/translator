@@ -13,7 +13,8 @@ use crate::error::{
 };
 use crate::language::Language;
 use crate::model::{
-    HistoryEntry, Improvement, ProviderId, ProviderTranslation, Selection, Settings, Timestamp,
+    HistoryEntry, ImproveDelta, Improvement, ProviderId, ProviderTranslation, Selection, Settings,
+    Timestamp,
 };
 use crate::ports::{
     CredentialStore, HistoryStore, HttpClient, HttpRequest, HttpResponse, ImproveRequest,
@@ -116,10 +117,7 @@ impl SelectionCapture for FakeCapture {
         if let Some(error) = &state.read_error {
             return Err(error.clone());
         }
-        state
-            .selection
-            .clone()
-            .ok_or(CaptureError::NothingSelected)
+        state.selection.clone().ok_or(CaptureError::NothingSelected)
     }
 
     fn replace_selection(&self, text: &str) -> Result<(), CaptureError> {
@@ -168,6 +166,7 @@ struct ProviderState {
     translate_error: Option<ProviderError>,
     improvement: Option<Improvement>,
     improve_error: Option<ProviderError>,
+    improve_deltas: Vec<ImproveDelta>,
     requests: Vec<TranslateRequest>,
     improve_requests: Vec<ImproveRequest>,
     skipped: Vec<ProviderId>,
@@ -194,6 +193,18 @@ impl FakeProvider {
     pub fn failing_improve_with(self, error: ProviderError) -> Self {
         self.state.lock().unwrap().improve_error = Some(error);
         self
+    }
+
+    /// Answer an improve request with this improvement and report these deltas,
+    /// in order, before returning it. The delta text is the test's to keep
+    /// consistent with the improvement; the engine must not merge or infer.
+    pub fn streaming_improvement(improvement: Improvement, deltas: Vec<ImproveDelta>) -> Self {
+        let fake = Self::default();
+        let mut state = fake.state.lock().unwrap();
+        state.improvement = Some(improvement);
+        state.improve_deltas = deltas;
+        drop(state);
+        fake
     }
 
     /// Report a provider as skipped for this session, as the real ladder does
@@ -231,7 +242,33 @@ impl TranslationProvider for FakeProvider {
         if let Some(error) = &state.improve_error {
             return Err(error.clone());
         }
-        state.improvement.clone().ok_or(ProviderError::NotConfigured)
+        state
+            .improvement
+            .clone()
+            .ok_or(ProviderError::NotConfigured)
+    }
+
+    fn improve_streaming(
+        &self,
+        request: &ImproveRequest,
+        sink: &mut dyn FnMut(&ImproveDelta),
+    ) -> Result<Improvement, ProviderError> {
+        let (answer, deltas) = {
+            let mut state = self.state.lock().unwrap();
+            state.improve_requests.push(request.clone());
+            if let Some(error) = &state.improve_error {
+                return Err(error.clone());
+            }
+            let answer = state
+                .improvement
+                .clone()
+                .ok_or(ProviderError::NotConfigured)?;
+            (answer, state.improve_deltas.clone())
+        };
+        for delta in &deltas {
+            sink(delta);
+        }
+        Ok(answer)
     }
 
     fn skipped(&self) -> Vec<ProviderId> {
@@ -259,7 +296,29 @@ struct HttpState {
     /// Answers consumed in order. An empty script uses `fallback`.
     scripted: VecDeque<Result<HttpResponse, HttpError>>,
     fallback: Option<Result<HttpResponse, HttpError>>,
+    /// Streamed answers consumed in order. An empty script uses `stream_fallback`.
+    streamed: VecDeque<Result<StreamedAnswer, HttpError>>,
+    stream_fallback: Option<Result<StreamedAnswer, HttpError>>,
     requests: Vec<HttpRequest>,
+}
+
+/// One streamed response: the status plus the exact byte chunks the test chose.
+/// The chunk boundaries are the point — a UTF-8 character or an SSE line may be
+/// split across them, exactly as a socket may deliver it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StreamedAnswer {
+    pub status: u16,
+    pub chunks: Vec<Vec<u8>>,
+}
+
+impl StreamedAnswer {
+    /// One chunk holding the whole body.
+    pub fn whole(status: u16, body: impl Into<String>) -> Self {
+        Self {
+            status,
+            chunks: vec![body.into().into_bytes()],
+        }
+    }
 }
 
 impl FakeHttpClient {
@@ -290,6 +349,33 @@ impl FakeHttpClient {
         fake
     }
 
+    /// Stream this body in these exact chunks to every `stream` call. A status
+    /// outside 2xx streams its body too, so the provider can read the error.
+    pub fn streaming_in_chunks(chunks: Vec<Vec<u8>>) -> Self {
+        Self::streaming_with_status(200, chunks)
+    }
+
+    /// Stream this body in these exact chunks with a chosen status.
+    pub fn streaming_with_status(status: u16, chunks: Vec<Vec<u8>>) -> Self {
+        let fake = Self::default();
+        fake.state.lock().unwrap().stream_fallback = Some(Ok(StreamedAnswer { status, chunks }));
+        fake
+    }
+
+    /// Stream one body as a single chunk.
+    pub fn streaming(status: u16, body: impl Into<String>) -> Self {
+        let fake = Self::default();
+        fake.state.lock().unwrap().stream_fallback = Some(Ok(StreamedAnswer::whole(status, body)));
+        fake
+    }
+
+    /// Fail every `stream` call before any body arrives.
+    pub fn failing_stream_with(error: HttpError) -> Self {
+        let fake = Self::default();
+        fake.state.lock().unwrap().stream_fallback = Some(Err(error));
+        fake
+    }
+
     pub fn requests(&self) -> Vec<HttpRequest> {
         self.state.lock().unwrap().requests.clone()
     }
@@ -307,6 +393,46 @@ impl HttpClient for FakeHttpClient {
             None => Err(HttpError::Request {
                 message: "the test scripted no answer".to_owned(),
             }),
+        }
+    }
+
+    fn stream(
+        &self,
+        request: &HttpRequest,
+        on_chunk: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<u16, HttpError> {
+        let answer = {
+            let mut state = self.state.lock().unwrap();
+            state.requests.push(request.clone());
+            if let Some(answer) = state.streamed.pop_front() {
+                answer
+            } else if let Some(answer) = &state.stream_fallback {
+                answer.clone()
+            } else {
+                // A scripted `execute` answer still streams, one chunk, so a test
+                // need not repeat the body.
+                match &state.fallback {
+                    Some(Ok(response)) => Ok(StreamedAnswer::whole(
+                        response.status,
+                        response.body.clone(),
+                    )),
+                    Some(Err(error)) => Err(error.clone()),
+                    None => Err(HttpError::Request {
+                        message: "the test scripted no answer".to_owned(),
+                    }),
+                }
+            }
+        };
+        match answer {
+            Ok(answer) => {
+                for chunk in &answer.chunks {
+                    if !on_chunk(chunk) {
+                        break;
+                    }
+                }
+                Ok(answer.status)
+            }
+            Err(error) => Err(error),
         }
     }
 }

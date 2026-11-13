@@ -2,6 +2,8 @@
 //! rustls: providers translate one request at a time on a worker thread, so an
 //! async runtime would buy nothing, and rustls keeps the build free of OpenSSL.
 
+use std::io::Read;
+
 use ureq::OrAnyStatus;
 
 use crate::error::HttpError;
@@ -28,6 +30,49 @@ impl Default for UreqHttpClient {
 
 impl HttpClient for UreqHttpClient {
     fn execute(&self, request: &HttpRequest) -> Result<HttpResponse, HttpError> {
+        let response = self.send(request)?;
+        let status = response.status();
+        let body = response.into_string().map_err(|error| HttpError::Request {
+            message: error.to_string(),
+        })?;
+        Ok(HttpResponse { status, body })
+    }
+
+    /// Read the body as the server writes it. The status is only known once the
+    /// headers arrive, so a non-2xx body is streamed too and the provider maps
+    /// it after the fact. Reading stops as soon as `on_chunk` answers false, which
+    /// is what a finished SSE stream does.
+    fn stream(
+        &self,
+        request: &HttpRequest,
+        on_chunk: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<u16, HttpError> {
+        let response = self.send(request)?;
+        let status = response.status();
+        let mut reader = response.into_reader();
+        let mut buffer = [0u8; 4096];
+        loop {
+            let read = reader
+                .read(&mut buffer)
+                .map_err(|error| HttpError::Request {
+                    message: error.to_string(),
+                })?;
+            if read == 0 {
+                break;
+            }
+            if !on_chunk(&buffer[..read]) {
+                break;
+            }
+        }
+        Ok(status)
+    }
+}
+
+impl UreqHttpClient {
+    /// Build and send one request with `or_any_status`: every HTTP status is an
+    /// answer the provider must read, not a transport failure. The transport
+    /// error is mapped here so neither caller carries ureq's large error type.
+    fn send(&self, request: &HttpRequest) -> Result<ureq::Response, HttpError> {
         let mut builder = match request.method {
             HttpMethod::Get => self.agent.get(&request.url),
             HttpMethod::Post => self.agent.post(&request.url),
@@ -35,19 +80,12 @@ impl HttpClient for UreqHttpClient {
         for (name, value) in &request.headers {
             builder = builder.set(name, value);
         }
-        // A non-2xx status is still an answer: MyMemory puts its real verdict in
-        // the body, so the provider, not the transport, decides what it means.
-        let response = match &request.body {
+        match &request.body {
             Some(body) => builder.send_string(body),
             None => builder.call(),
         }
         .or_any_status()
-        .map_err(failed_before_an_answer)?;
-        let status = response.status();
-        let body = response.into_string().map_err(|error| HttpError::Request {
-            message: error.to_string(),
-        })?;
-        Ok(HttpResponse { status, body })
+        .map_err(failed_before_an_answer)
     }
 }
 

@@ -491,3 +491,76 @@ button.primary {
   border-color: var(--accent);
   outline: none;
 }
+
+.provider-divider {
+  width: 100%;
+  margin: 2px 0;
+  border: 0;
+  border-top: 1px solid var(--edge);
+}
+
+/* --- Translate / Improve -------------------------------------------------- */
+
+.mode-switch {
+  display: flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.mode-switch .tab {
+  padding: 4px 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: GrayText;
+}
+
+.mode-switch .tab.active {
+  border-color: var(--edge);
+  background: Canvas;
+  color: CanvasText;
+  font-weight: 600;
+}
+
+.improve-parts {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 180px;
+}
+
+.improve-part {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+.improve-part-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.improve-part-head h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: GrayText;
+}
+
+/* Each part shares the pane's height and scrolls on its own: two answers that
+   must never be merged, even visually. */
+.improve-part .result-text {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}

@@ -4,8 +4,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::error::{CaptureError, EngineError};
 use crate::language::{guess_language, Direction, Language, LanguagePair};
 use crate::model::{
-    HistoryEntry, Mode, PopupPrefill, ProviderId, ProviderStatus, QuickTranslation, ReadAloud,
-    Replacement, Selection, Settings, TextOutcome, Timestamp, Translation,
+    HistoryEntry, ImproveDelta, Improvement, Mode, PopupPrefill, ProviderId, ProviderStatus,
+    QuickTranslation, ReadAloud, Replacement, Selection, Settings, TextOutcome, Timestamp,
+    Translation,
 };
 use crate::ports::{
     CredentialStore, HistoryStore, ImproveRequest, SelectionCapture, SettingsStore, SpeechOutput,
@@ -199,6 +200,36 @@ impl TranslatorEngine {
                 text,
             )?)),
         }
+    }
+
+    /// Improve text the user typed, reporting each field as the model writes it.
+    /// The returned `Improvement` is still the authority: a stream that never
+    /// produced both fields is an error, and the view replaces what it showed
+    /// with these two values on done.
+    ///
+    /// Whitespace-only text has nothing to improve: it answers with two empty
+    /// parts and never touches the network (or the Keychain).
+    ///
+    /// Improve is deliberately not recorded in history here. Ticket 09 owns all
+    /// history recording, including the mode column, so this ticket cannot write
+    /// a half-correct entry that the next ticket has to migrate.
+    pub fn improve_streaming(
+        &self,
+        text: &str,
+        sink: &mut dyn FnMut(&ImproveDelta),
+    ) -> Result<Improvement, EngineError> {
+        if text.trim().is_empty() {
+            return Ok(Improvement {
+                corrected: String::new(),
+                better: String::new(),
+            });
+        }
+        Ok(self.provider.improve_streaming(
+            &ImproveRequest {
+                text: text.to_owned(),
+            },
+            sink,
+        )?)
     }
 
     /// Which providers have a key in the credential store, and which the session

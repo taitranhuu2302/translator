@@ -7,7 +7,8 @@ use crate::error::{
 };
 use crate::language::Language;
 use crate::model::{
-    HistoryEntry, Improvement, ProviderId, ProviderTranslation, Selection, Settings, Timestamp,
+    HistoryEntry, ImproveDelta, Improvement, ProviderId, ProviderTranslation, Selection, Settings,
+    Timestamp,
 };
 
 /// The HTTP methods the providers use.
@@ -39,6 +40,23 @@ pub struct HttpResponse {
 /// URL and query they were given.
 pub trait HttpClient: Send + Sync {
     fn execute(&self, request: &HttpRequest) -> Result<HttpResponse, HttpError>;
+
+    /// Run a request and hand its body over in chunks as it arrives. `on_chunk`
+    /// returns whether to keep reading; a frozen stream stops early when the
+    /// provider has everything it needs. A non-2xx status still streams its body,
+    /// so the provider — not the transport — maps the failure.
+    ///
+    /// The default calls `execute` and hands the whole body over once, so a
+    /// client that cannot stream keeps working.
+    fn stream(
+        &self,
+        request: &HttpRequest,
+        on_chunk: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<u16, HttpError> {
+        let response = self.execute(request)?;
+        on_chunk(response.body.as_bytes());
+        Ok(response.status)
+    }
 }
 
 /// Reads the Selection from the focused app and overwrites it on Replace.
@@ -78,6 +96,21 @@ pub struct ImproveRequest {
 pub trait TranslationProvider: Send + Sync {
     fn translate(&self, request: &TranslateRequest) -> Result<ProviderTranslation, ProviderError>;
     fn improve(&self, request: &ImproveRequest) -> Result<Improvement, ProviderError>;
+
+    /// Improve, reporting the decoded text of each field as it becomes
+    /// available. The returned `Improvement` is the authority: a stream that
+    /// never produces both fields is a failure, so a view can never show prose
+    /// it had to parse itself.
+    ///
+    /// The default streams nothing and calls `improve`, which keeps providers
+    /// that do not stream (and every existing fake) compiling.
+    fn improve_streaming(
+        &self,
+        request: &ImproveRequest,
+        _sink: &mut dyn FnMut(&ImproveDelta),
+    ) -> Result<Improvement, ProviderError> {
+        self.improve(request)
+    }
 
     /// Providers the session has skipped after an auth or quota failure. The
     /// engine reports this in `provider_status`; providers that do not skip

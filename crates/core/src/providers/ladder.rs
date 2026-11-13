@@ -11,7 +11,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::error::ProviderError;
-use crate::model::{Improvement, ProviderId, ProviderTranslation};
+use crate::model::{ImproveDelta, Improvement, ProviderId, ProviderTranslation};
 use crate::ports::{ImproveRequest, TranslateRequest, TranslationProvider};
 
 struct Rung {
@@ -100,11 +100,19 @@ impl TranslationProvider for ProviderLadder {
         self.run(|provider| provider.improve(request))
     }
 
+    /// The same ladder rules for a streamed Improve. The rung that answers owns
+    /// the sink; a rung that fails may have already reported text, which is why
+    /// the view replaces both fields from the final `Improvement` on done.
+    fn improve_streaming(
+        &self,
+        request: &ImproveRequest,
+        sink: &mut dyn FnMut(&ImproveDelta),
+    ) -> Result<Improvement, ProviderError> {
+        self.run(|provider| provider.improve_streaming(request, &mut *sink))
+    }
+
     fn skipped(&self) -> Vec<ProviderId> {
-        self.skipped
-            .lock()
-            .expect("session skip lock")
-            .clone()
+        self.skipped.lock().expect("session skip lock").clone()
     }
 
     fn clear_skip(&self, provider: ProviderId) {
@@ -120,6 +128,7 @@ mod tests {
     use super::*;
     use crate::error::AuthFailure;
     use crate::language::Language;
+    use crate::model::{ImprovePart, Improvement};
     use crate::testing::FakeProvider;
 
     fn request() -> TranslateRequest {
@@ -128,6 +137,87 @@ mod tests {
             source: Some(Language::vietnamese()),
             target: Language::english(),
         }
+    }
+
+    fn improve_request() -> ImproveRequest {
+        ImproveRequest {
+            text: "He go home.".to_owned(),
+        }
+    }
+
+    fn improvement() -> Improvement {
+        Improvement {
+            corrected: "He goes home.".to_owned(),
+            better: "He's heading home.".to_owned(),
+        }
+    }
+
+    #[test]
+    fn an_improve_stream_comes_from_the_rung_that_answers() {
+        let azure = FakeProvider::default();
+        let groq = FakeProvider::streaming_improvement(
+            improvement(),
+            vec![
+                ImproveDelta {
+                    part: ImprovePart::Corrected,
+                    text: "He goes home.".to_owned(),
+                },
+                ImproveDelta {
+                    part: ImprovePart::Better,
+                    text: "He's heading home.".to_owned(),
+                },
+            ],
+        );
+        let ladder = ProviderLadder::new(vec![
+            (ProviderId::Azure, Arc::new(azure)),
+            (ProviderId::Groq, Arc::new(groq)),
+        ]);
+
+        let mut seen = Vec::new();
+        let answer = ladder
+            .improve_streaming(&improve_request(), &mut |delta| seen.push(delta.clone()))
+            .expect("the model rung answers");
+
+        assert_eq!(answer, improvement());
+        assert_eq!(
+            seen,
+            vec![
+                ImproveDelta {
+                    part: ImprovePart::Corrected,
+                    text: "He goes home.".to_owned(),
+                },
+                ImproveDelta {
+                    part: ImprovePart::Better,
+                    text: "He's heading home.".to_owned(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_missing_model_key_falls_through_and_is_never_a_session_ban() {
+        let missing = FakeProvider::default().failing_improve_with(ProviderError::MissingKey {
+            provider: ProviderId::Groq,
+        });
+        let fallback = FakeProvider::improving_with(improvement());
+        let ladder = ProviderLadder::new(vec![
+            (ProviderId::Groq, Arc::new(missing.clone())),
+            (ProviderId::MyMemory, Arc::new(fallback)),
+        ]);
+
+        ladder
+            .improve(&improve_request())
+            .expect("the next rung answers");
+        ladder
+            .improve(&improve_request())
+            .expect("the next rung answers");
+
+        assert_eq!(
+            missing.improve_requests().len(),
+            2,
+            "a missing key is not a failure to skip"
+        );
+        assert!(ladder.skipped().is_empty());
     }
 
     fn translation(text: &str, provider: ProviderId) -> ProviderTranslation {
@@ -153,10 +243,15 @@ mod tests {
     fn the_first_provider_that_answers_wins_and_the_rest_are_not_asked() {
         let (azure, my_memory, ladder) = azure_and_my_memory();
 
-        let answer = ladder.translate(&request()).expect("the first rung answers");
+        let answer = ladder
+            .translate(&request())
+            .expect("the first rung answers");
         assert_eq!(answer.text, "from Azure");
         assert_eq!(azure.requests().len(), 1);
-        assert!(my_memory.requests().is_empty(), "the second rung is not used");
+        assert!(
+            my_memory.requests().is_empty(),
+            "the second rung is not used"
+        );
     }
 
     #[test]
@@ -172,7 +267,10 @@ mod tests {
         ]);
 
         assert_eq!(
-            ladder.translate(&request()).expect("the next rung answers").text,
+            ladder
+                .translate(&request())
+                .expect("the next rung answers")
+                .text,
             "from MyMemory"
         );
     }
@@ -191,11 +289,17 @@ mod tests {
         ]);
 
         assert_eq!(
-            ladder.translate(&request()).expect("the fallback answers").text,
+            ladder
+                .translate(&request())
+                .expect("the fallback answers")
+                .text,
             "from MyMemory"
         );
         assert_eq!(
-            ladder.translate(&request()).expect("the fallback answers").text,
+            ladder
+                .translate(&request())
+                .expect("the fallback answers")
+                .text,
             "from MyMemory"
         );
 
@@ -290,12 +394,21 @@ mod tests {
         ]);
 
         assert_eq!(
-            ladder.translate(&request()).expect("the keyless rung answers").text,
+            ladder
+                .translate(&request())
+                .expect("the keyless rung answers")
+                .text,
             "from MyMemory"
         );
-        ladder.translate(&request()).expect("the keyless rung answers");
+        ladder
+            .translate(&request())
+            .expect("the keyless rung answers");
 
-        assert_eq!(azure.requests().len(), 2, "a missing key is not a failure to skip");
+        assert_eq!(
+            azure.requests().len(),
+            2,
+            "a missing key is not a failure to skip"
+        );
         assert!(ladder.skipped().is_empty());
     }
 
@@ -319,7 +432,11 @@ mod tests {
 
         assert!(ladder.skipped().is_empty());
         ladder.translate(&request()).expect("the fallback answers");
-        assert_eq!(azure.requests().len(), 2, "Azure is tried again after the fix");
+        assert_eq!(
+            azure.requests().len(),
+            2,
+            "Azure is tried again after the fix"
+        );
     }
 
     #[test]

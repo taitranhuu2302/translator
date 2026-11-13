@@ -9,9 +9,10 @@ use translator_core::testing::{
     SpokenUtterance,
 };
 use translator_core::{
-    CachedProvider, CaptureError, Direction, EngineError, Improvement, Language, LanguagePair,
-    Mode, PopupPrefill, ProviderId, ProviderTranslation, Selection, Settings, SettingsStore,
-    SpeechError, TextOutcome, TranslateRequest, Translation, TranslatorEngine,
+    CachedProvider, CaptureError, Direction, EngineError, ImproveDelta, ImprovePart,
+    ImproveRequest, Improvement, Language, LanguagePair, Mode, PopupPrefill, ProviderError,
+    ProviderId, ProviderTranslation, Selection, Settings, SettingsStore, SpeechError, TextOutcome,
+    TranslateRequest, Translation, TranslatorEngine,
 };
 
 struct Harness {
@@ -65,7 +66,10 @@ fn provider_saying(text: &str) -> FakeProvider {
 
 #[test]
 fn quick_translate_sends_the_selection_to_the_provider_and_records_it_in_history() {
-    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    );
 
     let outcome = harness.engine().quick_translate().expect("quick translate");
 
@@ -92,7 +96,10 @@ fn quick_translate_sends_the_selection_to_the_provider_and_records_it_in_history
 
 #[test]
 fn a_vietnamese_selection_is_translated_into_the_english_target() {
-    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    );
 
     let outcome = harness.engine().quick_translate().expect("quick translate");
 
@@ -173,7 +180,10 @@ fn direction_never_asks_a_provider_to_translate_a_language_into_itself() {
 
 #[test]
 fn a_rejected_history_write_never_fails_the_translation() {
-    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    );
     let engine = TranslatorEngine::new(
         Arc::new(harness.capture.clone()),
         Arc::new(harness.provider.clone()),
@@ -195,7 +205,10 @@ fn a_rejected_history_write_never_fails_the_translation() {
 
 #[test]
 fn replace_selection_writes_the_translation_over_the_selection() {
-    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    );
 
     let outcome = harness
         .engine()
@@ -209,7 +222,10 @@ fn replace_selection_writes_the_translation_over_the_selection() {
 
 #[test]
 fn the_popup_replace_writes_the_translation_the_user_saw_without_reading_again() {
-    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    );
     let translation = Translation {
         text: "Hello".to_owned(),
         provider: ProviderId::MyMemory,
@@ -309,7 +325,10 @@ fn secure_input_refuses_a_popup_replace_before_anything_is_written() {
 
 #[test]
 fn a_rejected_history_write_never_fails_a_replace() {
-    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    );
     let engine = TranslatorEngine::new(
         Arc::new(harness.capture.clone()),
         Arc::new(harness.provider.clone()),
@@ -331,7 +350,10 @@ fn a_rejected_history_write_never_fails_a_replace() {
 
 #[test]
 fn read_aloud_speaks_the_selection_and_never_the_translation() {
-    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    );
 
     let outcome = harness.engine().read_aloud().expect("read aloud");
 
@@ -465,7 +487,10 @@ fn a_replace_that_the_focused_app_refuses_is_a_typed_error() {
 
 #[test]
 fn translate_text_returns_a_translation_without_touching_the_selection() {
-    let harness = Harness::new(FakeCapture::with_selection("ignored"), provider_saying("Hello"));
+    let harness = Harness::new(
+        FakeCapture::with_selection("ignored"),
+        provider_saying("Hello"),
+    );
 
     let outcome = harness
         .engine()
@@ -666,7 +691,10 @@ fn secure_input_stops_the_translate_window_before_any_text_reaches_a_provider() 
 
 #[test]
 fn the_accessibility_state_comes_from_the_capture_port() {
-    let denied = Harness::new(FakeCapture::default().not_granted(), provider_saying("Hello"));
+    let denied = Harness::new(
+        FakeCapture::default().not_granted(),
+        provider_saying("Hello"),
+    );
     let granted = Harness::new(FakeCapture::default(), provider_saying("Hello"));
 
     assert!(!denied.engine().accessibility_granted());
@@ -700,11 +728,17 @@ fn opening_the_accessibility_settings_pane_goes_through_the_platform() {
 
 #[test]
 fn onboarding_stays_unseen_until_it_is_completed_and_the_flag_persists() {
-    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    );
 
     assert!(!harness.engine().settings().unwrap().onboarding_seen);
 
-    harness.engine().complete_onboarding().expect("complete onboarding");
+    harness
+        .engine()
+        .complete_onboarding()
+        .expect("complete onboarding");
 
     assert!(harness.settings.current().onboarding_seen);
     assert!(harness.engine().settings().unwrap().onboarding_seen);
@@ -737,7 +771,10 @@ fn improve_text_returns_the_two_labelled_parts() {
 
 #[test]
 fn the_popup_starts_with_the_selection_captured_before_it_was_shown() {
-    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    );
 
     assert_eq!(
         harness.engine().popup_prefill(),
@@ -751,16 +788,25 @@ fn the_popup_starts_with_the_selection_captured_before_it_was_shown() {
 
 #[test]
 fn the_popup_says_nothing_was_selected_for_an_empty_selection() {
-    let harness = Harness::new(FakeCapture::with_selection("   \n"), provider_saying("Hello"));
+    let harness = Harness::new(
+        FakeCapture::with_selection("   \n"),
+        provider_saying("Hello"),
+    );
 
-    assert_eq!(harness.engine().popup_prefill(), PopupPrefill::NothingSelected);
+    assert_eq!(
+        harness.engine().popup_prefill(),
+        PopupPrefill::NothingSelected
+    );
 }
 
 #[test]
 fn the_popup_says_nothing_was_selected_when_the_focused_app_has_no_selection() {
     let harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
 
-    assert_eq!(harness.engine().popup_prefill(), PopupPrefill::NothingSelected);
+    assert_eq!(
+        harness.engine().popup_prefill(),
+        PopupPrefill::NothingSelected
+    );
 }
 
 #[test]
@@ -813,4 +859,151 @@ fn translating_the_same_text_twice_through_the_engine_asks_the_provider_once() {
 
     assert_eq!(first, second);
     assert_eq!(provider.requests().len(), 1);
+}
+
+#[test]
+fn improve_streaming_reports_both_parts_in_order_and_returns_the_authority() {
+    let harness = Harness::new(
+        FakeCapture::default(),
+        FakeProvider::streaming_improvement(
+            Improvement {
+                corrected: "He is going home.".to_owned(),
+                better: "He's heading home.".to_owned(),
+            },
+            vec![
+                ImproveDelta {
+                    part: ImprovePart::Corrected,
+                    text: "He is ".to_owned(),
+                },
+                ImproveDelta {
+                    part: ImprovePart::Corrected,
+                    text: "going home.".to_owned(),
+                },
+                ImproveDelta {
+                    part: ImprovePart::Better,
+                    text: "He's heading home.".to_owned(),
+                },
+            ],
+        ),
+    );
+
+    let mut corrected = String::new();
+    let mut better = String::new();
+    let improvement = harness
+        .engine()
+        .improve_streaming("He go home.", &mut |delta| match delta.part {
+            ImprovePart::Corrected => corrected.push_str(&delta.text),
+            ImprovePart::Better => better.push_str(&delta.text),
+        })
+        .expect("improve streaming");
+
+    assert_eq!(corrected, "He is going home.");
+    assert_eq!(better, "He's heading home.");
+    assert_eq!(improvement.corrected, "He is going home.");
+    assert_eq!(improvement.better, "He's heading home.");
+    assert_eq!(
+        harness.provider.improve_requests(),
+        vec![ImproveRequest {
+            text: "He go home.".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn malformed_model_output_is_a_typed_provider_error_not_a_guessed_answer() {
+    let harness = Harness::new(
+        FakeCapture::default(),
+        FakeProvider::default().failing_improve_with(ProviderError::MalformedResponse {
+            provider: ProviderId::Groq,
+            message: "the answer carried an empty better field".to_owned(),
+        }),
+    );
+
+    let error = harness
+        .engine()
+        .improve_streaming("He go home.", &mut |_| {})
+        .expect_err("a malformed answer fails");
+
+    match error {
+        EngineError::Provider(ProviderError::MalformedResponse { provider, message }) => {
+            assert_eq!(provider, ProviderId::Groq);
+            assert!(message.contains("empty better field"), "{message}");
+        }
+        other => panic!("expected a typed malformed response, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_missing_groq_key_names_groq_in_the_engine_error() {
+    let harness = Harness::new(
+        FakeCapture::default(),
+        FakeProvider::default().failing_improve_with(ProviderError::MissingKey {
+            provider: ProviderId::Groq,
+        }),
+    );
+
+    let error = harness
+        .engine()
+        .improve_streaming("He go home.", &mut |_| {})
+        .expect_err("there is no key");
+
+    assert_eq!(
+        error.to_string(),
+        "translation failed: Groq needs an API key. Add one in Settings."
+    );
+}
+
+#[test]
+fn improving_blank_text_asks_no_provider_and_writes_no_history() {
+    let harness = Harness::new(
+        FakeCapture::default(),
+        FakeProvider::streaming_improvement(
+            Improvement {
+                corrected: "unused".to_owned(),
+                better: "unused".to_owned(),
+            },
+            vec![ImproveDelta {
+                part: ImprovePart::Corrected,
+                text: "unused".to_owned(),
+            }],
+        ),
+    );
+
+    let mut deltas = 0;
+    let improvement = harness
+        .engine()
+        .improve_streaming("   \n\t", &mut |_| deltas += 1)
+        .expect("blank text has nothing to improve");
+
+    assert_eq!(
+        improvement,
+        Improvement {
+            corrected: String::new(),
+            better: String::new(),
+        }
+    );
+    assert_eq!(deltas, 0);
+    assert!(harness.provider.improve_requests().is_empty());
+    assert!(harness.history.entries().is_empty());
+}
+
+#[test]
+fn improve_is_not_recorded_in_history_until_the_history_ticket_owns_it() {
+    let harness = Harness::new(
+        FakeCapture::default(),
+        FakeProvider::improving_with(Improvement {
+            corrected: "He is going home.".to_owned(),
+            better: "He's heading home.".to_owned(),
+        }),
+    );
+
+    harness
+        .engine()
+        .improve_streaming("He go home.", &mut |_| {})
+        .expect("improve streaming");
+
+    assert!(
+        harness.history.entries().is_empty(),
+        "ticket 09 records Improve, with the mode column"
+    );
 }

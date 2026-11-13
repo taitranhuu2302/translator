@@ -104,6 +104,17 @@ function formatProviderFailure(error: ProviderError): PopupFailure {
       detail: "Add a provider key in Settings, or try again later.",
     };
   }
+  // Improve has no keyless fallback, so a missing key must name the provider:
+  // "No translation provider is available" would leave the user guessing which
+  // key to add.
+  if (typeof error === "object" && "missing_key" in error) {
+    const name = providerLabel(error.missing_key.provider);
+    return {
+      kind: "provider",
+      title: `${name} needs an API key.`,
+      detail: `Add a ${name} key under Provider keys in Settings, then try again.`,
+    };
+  }
   if ("quota_exceeded" in error) {
     return {
       kind: "provider",

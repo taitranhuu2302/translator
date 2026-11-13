@@ -8,10 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::ProviderError;
 use crate::language::Language;
-use crate::model::{Improvement, ProviderId, ProviderTranslation};
-use crate::ports::{
-    ImproveRequest, TranslateRequest, TranslationProvider,
-};
+use crate::model::{ImproveDelta, Improvement, ProviderId, ProviderTranslation};
+use crate::ports::{ImproveRequest, TranslateRequest, TranslationProvider};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Key {
@@ -113,6 +111,18 @@ impl TranslationProvider for CachedProvider {
         self.inner.improve(request)
     }
 
+    /// The cache has nothing to replay while text is still arriving, so the
+    /// stream goes straight through. Without this override the default would
+    /// call this wrapper's `improve` and the deltas would never leave the inner
+    /// provider's sink.
+    fn improve_streaming(
+        &self,
+        request: &ImproveRequest,
+        sink: &mut dyn FnMut(&ImproveDelta),
+    ) -> Result<Improvement, ProviderError> {
+        self.inner.improve_streaming(request, sink)
+    }
+
     /// The cache sits in front of the ladder, so it must not hide which rungs the
     /// session has skipped.
     fn skipped(&self) -> Vec<ProviderId> {
@@ -163,7 +173,11 @@ mod tests {
             .expect("the second is a cache hit");
 
         assert_eq!(first, second);
-        assert_eq!(fake.requests().len(), 1, "only one request reached the provider");
+        assert_eq!(
+            fake.requests().len(),
+            1,
+            "only one request reached the provider"
+        );
     }
 
     #[test]

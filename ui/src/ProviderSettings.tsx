@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 
 import { ipc, type ProviderStatus, type Settings } from "./ipc";
-import { azureStatusLine, regionChanged, withAzureRegion } from "./providerStatus";
+import {
+  azureStatusLine,
+  groqStatusLine,
+  regionChanged,
+  withAzureRegion,
+} from "./providerStatus";
 
 /**
  * The minimal provider surface for ticket 06: whether Azure has a key, a place to
@@ -19,9 +24,11 @@ export function ProviderSettings({
   const [status, setStatus] = useState<ProviderStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [keyDraft, setKeyDraft] = useState("");
+  const [groqDraft, setGroqDraft] = useState("");
   const [regionDraft, setRegionDraft] = useState(settings.azure_region);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [groqNotice, setGroqNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,6 +74,35 @@ export function ProviderSettings({
       setNotice("Azure key cleared. MyMemory translates without one.");
     } catch (reason) {
       setNotice(`The key could not be cleared: ${describe(reason)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveGroqKey = async () => {
+    setBusy(true);
+    setGroqNotice(null);
+    try {
+      setStatus(await ipc.saveProviderKey("groq", groqDraft));
+      // Write-only draft: the key is never read back into the field.
+      setGroqDraft("");
+      setGroqNotice("Groq key saved in the Keychain.");
+    } catch (reason) {
+      setGroqNotice(`The key could not be saved: ${describe(reason)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearGroqKey = async () => {
+    setBusy(true);
+    setGroqNotice(null);
+    try {
+      setStatus(await ipc.clearProviderKey("groq"));
+      setGroqDraft("");
+      setGroqNotice("Groq key cleared. Improve will name the key it needs.");
+    } catch (reason) {
+      setGroqNotice(`The key could not be cleared: ${describe(reason)}`);
     } finally {
       setBusy(false);
     }
@@ -158,6 +194,56 @@ export function ProviderSettings({
       </div>
 
       {notice ? <p className="muted small">{notice}</p> : null}
+
+      <hr className="provider-divider" />
+
+      <div className="provider-head">
+        <h2>Groq (Improve)</h2>
+        <span className={status?.groq_configured ? "badge ok" : "badge"}>
+          {status?.groq_configured ? "Key saved" : "No key"}
+        </span>
+      </div>
+
+      <p className="muted small">
+        {statusError
+          ? `The provider status could not be read: ${statusError}`
+          : status
+            ? groqStatusLine(status)
+            : "Checking the Keychain…"}
+      </p>
+
+      <label className="field">
+        <span>API key</span>
+        <input
+          type="password"
+          value={groqDraft}
+          onChange={(event) => setGroqDraft(event.target.value)}
+          placeholder={
+            status?.groq_configured
+              ? "Saved — enter a new key to replace it"
+              : "Paste a Groq API key"
+          }
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </label>
+
+      <div className="actions">
+        <button
+          className="primary"
+          onClick={saveGroqKey}
+          disabled={busy || groqDraft.trim().length === 0}
+        >
+          Save key
+        </button>
+        {status?.groq_configured ? (
+          <button onClick={clearGroqKey} disabled={busy}>
+            Clear key
+          </button>
+        ) : null}
+      </div>
+
+      {groqNotice ? <p className="muted small">{groqNotice}</p> : null}
     </section>
   );
 }

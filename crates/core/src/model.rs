@@ -68,6 +68,23 @@ pub struct Improvement {
     pub better: String,
 }
 
+/// Which half of an `Improvement` a streamed chunk belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImprovePart {
+    Corrected,
+    Better,
+}
+
+/// A piece of one improved field, decoded from the model's JSON as it arrived.
+/// The view appends it to the labelled section; it never receives prose it has
+/// to split itself.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImproveDelta {
+    pub part: ImprovePart,
+    pub text: String,
+}
+
 /// One row in local history: both sides of a translation, the provider, the mode
 /// and when it happened.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

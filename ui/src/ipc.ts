@@ -79,6 +79,9 @@ export interface Improvement {
   better: string;
 }
 
+/** Which half of an `Improvement` a streamed chunk belongs to. */
+export type ImprovePart = "corrected" | "better";
+
 export type TextOutcome =
   | { translation: Translation }
   | { improvement: Improvement };
@@ -133,6 +136,9 @@ export type AuthFailure = "invalid_key" | "resource_not_authorized";
 export type ProviderError =
   | "not_configured"
   | "offline"
+  /** The provider needs a key it does not have. It names the provider, so the
+   * pane can say which key to add instead of "no provider is available". */
+  | { missing_key: { provider: ProviderId } }
   | { quota_exceeded: { provider: ProviderId } }
   | {
       authentication_failed: {
@@ -196,6 +202,11 @@ export const ipc = {
     direction?: Direction | null,
   ): Promise<TextOutcome> =>
     call("translate_text", { text, mode, direction: direction ?? null }),
+  /** Improve typed English and stream it back. The command returns once the
+   * worker is started; the answer arrives as `translation-chunk`,
+   * `translation-done` and `translation-error`, all tagged with `requestId`. */
+  improveText: (requestId: string, text: string): Promise<void> =>
+    call("improve_text", { requestId, text }),
   providerStatus: (): Promise<ProviderStatus> => call("provider_status"),
 
   /** Save one provider's API key in the Keychain. An empty key clears it. The
@@ -244,11 +255,13 @@ export const ipc = {
 
 /**
  * Stream shapes. Translation and Improve share one event shape so the views have
- * one code path; the emitters land with the streaming tickets.
+ * one code path; `part` is present only for Improve, where each chunk belongs to
+ * the Corrected or the Better section.
  */
 export interface TranslationChunk {
   request_id: string;
   text: string;
+  part?: ImprovePart;
 }
 
 export interface TranslationDone {

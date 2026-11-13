@@ -3,11 +3,15 @@
 
 pub mod azure;
 pub mod cache;
+pub mod groq;
+pub mod improve_stream;
 pub mod ladder;
 pub mod mymemory;
 
 pub use azure::AzureProvider;
 pub use cache::CachedProvider;
+pub use groq::GroqProvider;
+pub use improve_stream::ImprovementStream;
 pub use ladder::ProviderLadder;
 pub use mymemory::MyMemoryProvider;
 

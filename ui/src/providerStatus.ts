@@ -15,6 +15,18 @@ export function azureStatusLine(status: ProviderStatus): string {
   return "No key yet. MyMemory translates without one, so everything still works.";
 }
 
+/** One line saying whether Groq — Improve's model — will be used. Improve has
+ * no keyless fallback, so this is the one that has to name the key. */
+export function groqStatusLine(status: ProviderStatus): string {
+  if (status.groq_skipped) {
+    return "Skipped for this session after an authentication or quota failure. A new key is tried again.";
+  }
+  if (status.groq_configured) {
+    return "Key saved in the Keychain. Improve uses Groq; translation never waits on it.";
+  }
+  return "No key yet. Improve needs a Groq key; translation works without one.";
+}
+
 /** The region is stored trimmed: whitespace must not become a header value. */
 export function withAzureRegion(settings: Settings, region: string): Settings {
   return { ...settings, azure_region: region.trim() };
