@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::CaptureError;
-use crate::language::{Language, LanguagePair};
+use crate::language::{Direction, Language, LanguagePair};
 
 /// The text the user highlighted in another app (or in our own window) when a
 /// shortcut fired.
@@ -86,7 +86,9 @@ pub struct ImproveDelta {
 }
 
 /// One row in local history: both sides of a translation, the provider, the mode
-/// and when it happened.
+/// and when it happened. `direction` is known when the provider detected the
+/// source language or the window translated in an explicit direction, and
+/// `corrected` carries Improve's corrected part (`result` holds the better one).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub source: String,
@@ -94,6 +96,14 @@ pub struct HistoryEntry {
     pub provider: ProviderId,
     pub mode: Mode,
     pub created_at: Timestamp,
+    /// The direction this result was produced in, when it was known. An entry
+    /// written before this field existed loads with no direction.
+    #[serde(default)]
+    pub direction: Option<Direction>,
+    /// Improve's corrected sentence. `None` for a translation, and for rows
+    /// written before Improve recorded both parts.
+    #[serde(default)]
+    pub corrected: Option<String>,
 }
 
 /// Seconds since the Unix epoch.
@@ -203,7 +213,8 @@ pub fn utf16_length(text: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::utf16_length;
+    use super::{utf16_length, HistoryEntry, Mode, ProviderId, Timestamp};
+    use crate::language::{Direction, Language};
 
     #[test]
     fn utf16_length_counts_code_units_not_bytes_or_scalars() {
@@ -222,5 +233,63 @@ mod tests {
         assert_eq!(utf16_length(emoji), 8);
         assert_ne!(utf16_length(emoji), emoji.chars().count());
         assert_ne!(utf16_length(emoji), emoji.len());
+    }
+
+    fn improved_entry() -> HistoryEntry {
+        HistoryEntry {
+            source: "He go home.".to_owned(),
+            result: "He's heading home.".to_owned(),
+            provider: ProviderId::Groq,
+            mode: Mode::Improve,
+            created_at: Timestamp(1_700_000_000),
+            direction: None,
+            corrected: Some("He is going home.".to_owned()),
+        }
+    }
+
+    #[test]
+    fn a_history_entry_round_trips_with_its_direction_and_corrected_part() {
+        let entry = HistoryEntry {
+            source: "Xin chào".to_owned(),
+            result: "Hello".to_owned(),
+            provider: ProviderId::MyMemory,
+            mode: Mode::Translate,
+            created_at: Timestamp(1_700_000_000),
+            direction: Some(Direction {
+                source: Language::vietnamese(),
+                target: Language::english(),
+            }),
+            corrected: None,
+        };
+
+        let json = serde_json::to_string(&entry).expect("a history entry serializes");
+        let loaded: HistoryEntry =
+            serde_json::from_str(&json).expect("a history entry deserializes");
+
+        assert_eq!(loaded, entry);
+    }
+
+    #[test]
+    fn an_improvement_keeps_both_parts_after_a_round_trip() {
+        let entry = improved_entry();
+
+        let json = serde_json::to_string(&entry).expect("an improvement serializes");
+        let loaded: HistoryEntry =
+            serde_json::from_str(&json).expect("an improvement deserializes");
+
+        assert_eq!(loaded.result, "He's heading home.");
+        assert_eq!(loaded.corrected.as_deref(), Some("He is going home."));
+    }
+
+    #[test]
+    fn a_history_entry_written_before_the_new_fields_still_loads() {
+        let loaded: HistoryEntry = serde_json::from_str(
+            r#"{"source":"Xin chào","result":"Hello","provider":"my_memory","mode":"translate","created_at":1700000000}"#,
+        )
+        .expect("the older shape still deserializes");
+
+        assert_eq!(loaded.direction, None);
+        assert_eq!(loaded.corrected, None);
+        assert_eq!(loaded.mode, Mode::Translate);
     }
 }

@@ -9,6 +9,7 @@ description = "The only crate that may touch macOS APIs; implements the core por
 cc = "1"
 
 [dependencies]
+rusqlite = { version = "0.42", features = ["bundled", "functions"] }
 security-framework = "3"
 security-framework-sys = "2"
 serde_json = { workspace = true }

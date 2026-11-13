@@ -310,6 +310,17 @@ async fn search_history(
     state.engine.history(&query, limit as usize)
 }
 
+/// Shape a stored history entry for the Translate Window again. It reads no
+/// provider and writes no row: reopening yesterday's translation spends no
+/// quota and does not duplicate it.
+#[tauri::command]
+async fn reopen_history_entry(
+    state: State<'_, AppState>,
+    entry: HistoryEntry,
+) -> Result<TextOutcome, EngineError> {
+    state.engine.reopen(&entry)
+}
+
 #[tauri::command]
 async fn take_selection_prefill(state: State<'_, AppState>) -> Result<Option<Prefill>, ()> {
     Ok(state.take_prefill())
@@ -528,6 +539,23 @@ fn track_frame(app: &AppHandle) {
     });
 }
 
+/// Purge history at launch and once a day afterwards, on a background thread:
+/// a local database that is slow to open, or a purge that fails, must never
+/// delay startup or block a shortcut.
+fn maintain_history(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || loop {
+        match app.state::<AppState>().engine.purge_history() {
+            Ok(removed) if removed > 0 => {
+                eprintln!("Translator: purged {removed} history entries older than 30 days");
+            }
+            Ok(_) => {}
+            Err(error) => eprintln!("Translator: history purge failed: {error}"),
+        }
+        std::thread::sleep(Duration::from_secs(24 * 60 * 60));
+    });
+}
+
 /// Read Aloud: capture and speak off the main thread, so a slow capture or a long
 /// utterance never delays the next shortcut. Nothing is shown when nothing was
 /// selected — the shortcut simply stays quiet — but a typed failure gets a dialog,
@@ -681,7 +709,7 @@ fn main() {
         Arc::new(MacSelectionCapture),
         provider,
         Arc::new(MacSpeechOutput),
-        Arc::new(MacHistoryStore),
+        Arc::new(MacHistoryStore::default()),
         settings_store,
         credentials,
     );
@@ -724,6 +752,7 @@ fn main() {
             get_settings,
             save_settings,
             search_history,
+            reopen_history_entry,
             take_selection_prefill,
             take_popup_prefill,
             hide_popup,
@@ -774,6 +803,9 @@ fn main() {
             // is still hidden, so the first paint is already in the right place.
             restore_frame(app.handle());
             track_frame(app.handle());
+            // History ages out at launch and once a day after that; it runs on
+            // its own thread so the database can never slow the first shortcut.
+            maintain_history(app.handle());
 
             let routes = ShortcutRoutes {
                 quick_translate: register_shortcut(app.handle(), &quick_translate_binding),

@@ -172,4 +172,33 @@ describe("the Improve pane", () => {
     expect(partLabel("corrected")).toBe("Corrected");
     expect(partLabel("better")).toBe("Better");
   });
+
+  it("shows both stored parts when an entry is reopened, without improving", () => {
+    expect(
+      reduceImprovement(EMPTY_IMPROVEMENT, {
+        type: "restored",
+        requestId: 7,
+        improvement,
+      }),
+    ).toEqual({
+      phase: "improved",
+      requestId: 7,
+      corrected: "He goes home.",
+      better: "He's heading home.",
+    });
+
+    // A stored entry also replaces a failure on screen.
+    const failed = reduceImprovement(started(), {
+      type: "failed",
+      requestId: 1,
+      error: { provider: "offline" },
+    });
+    expect(
+      reduceImprovement(failed, {
+        type: "restored",
+        requestId: 7,
+        improvement,
+      }).phase,
+    ).toBe("improved");
+  });
 });

@@ -9,10 +9,10 @@ use translator_core::testing::{
     SpokenUtterance,
 };
 use translator_core::{
-    CachedProvider, CaptureError, Direction, EngineError, ImproveDelta, ImprovePart,
-    ImproveRequest, Improvement, Language, LanguagePair, Mode, PopupPrefill, ProviderError,
-    ProviderId, ProviderTranslation, Selection, Settings, SettingsStore, SpeechError, TextOutcome,
-    TranslateRequest, Translation, TranslatorEngine,
+    CachedProvider, CaptureError, Direction, EngineError, HistoryEntry, HistoryStore, ImproveDelta,
+    ImprovePart, ImproveRequest, Improvement, Language, LanguagePair, Mode, PopupPrefill,
+    ProviderError, ProviderId, ProviderTranslation, Selection, Settings, SettingsStore,
+    SpeechError, TextOutcome, Timestamp, TranslateRequest, Translation, TranslatorEngine,
 };
 
 struct Harness {
@@ -252,9 +252,10 @@ fn the_popup_replace_writes_the_translation_the_user_saw_without_reading_again()
     );
 
     let recorded = harness.history.entries();
-    assert_eq!(recorded.len(), 1);
-    assert_eq!(recorded[0].source, "Xin chào");
-    assert_eq!(recorded[0].result, "Hello");
+    assert!(
+        recorded.is_empty(),
+        "Quick Translate recorded this translation when it produced it; Enter writes no second row"
+    );
 }
 
 #[test]
@@ -988,7 +989,139 @@ fn improving_blank_text_asks_no_provider_and_writes_no_history() {
 }
 
 #[test]
-fn improve_is_not_recorded_in_history_until_the_history_ticket_owns_it() {
+fn a_translation_records_the_direction_the_provider_detected() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    );
+
+    harness.engine().quick_translate().expect("quick translate");
+
+    let entry = harness.history.entries().pop().expect("one history entry");
+    assert_eq!(
+        entry.direction,
+        Some(Direction {
+            source: Language::vietnamese(),
+            target: Language::english(),
+        }),
+        "when the provider named the source language, the direction is known"
+    );
+}
+
+#[test]
+fn a_translation_with_no_detected_source_records_no_direction() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("42"),
+        FakeProvider::responding_with(ProviderTranslation {
+            text: "42".to_owned(),
+            provider: ProviderId::MyMemory,
+            detected_source: None,
+        }),
+    );
+
+    harness.engine().quick_translate().expect("quick translate");
+
+    let entry = harness.history.entries().pop().expect("one history entry");
+    assert_eq!(entry.direction, None);
+}
+
+#[test]
+fn a_window_translation_in_a_chosen_direction_records_that_direction() {
+    let harness = Harness::new(
+        FakeCapture::default(),
+        FakeProvider::responding_with(ProviderTranslation {
+            text: "Xin chào".to_owned(),
+            provider: ProviderId::MyMemory,
+            detected_source: None,
+        }),
+    );
+    let direction = Direction {
+        source: Language::english(),
+        target: Language::vietnamese(),
+    };
+
+    harness
+        .engine()
+        .translate_text_in("Hello", Mode::Translate, Some(direction.clone()))
+        .expect("translate in the chosen direction");
+
+    let entry = harness.history.entries().pop().expect("one history entry");
+    assert_eq!(
+        entry.direction,
+        Some(direction),
+        "Swap knows its direction even when the provider detects nothing"
+    );
+    assert_eq!(entry.source, "Hello");
+    assert_eq!(entry.result, "Xin chào");
+}
+
+#[test]
+fn a_popup_enter_after_quick_translate_writes_one_history_row_not_two() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    );
+    let engine = harness.engine();
+
+    let quick = engine.quick_translate().expect("quick translate");
+    engine
+        .replace_with_translation(&quick.source_text, quick.translation)
+        .expect("popup Enter replaces");
+
+    assert_eq!(
+        harness.history.records(),
+        1,
+        "Quick Translate recorded the translation; Enter must not record it again"
+    );
+    assert_eq!(harness.history.entries().len(), 1);
+}
+
+#[test]
+fn replace_selection_records_one_row_through_the_seam() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    );
+
+    harness
+        .engine()
+        .replace_selection()
+        .expect("replace selection");
+
+    assert_eq!(harness.history.records(), 1);
+    assert_eq!(harness.history.entries().len(), 1);
+}
+
+#[test]
+fn improve_streaming_records_both_parts_and_the_mode_exactly_once() {
+    let harness = Harness::new(
+        FakeCapture::default(),
+        FakeProvider::streaming_improvement(
+            Improvement {
+                corrected: "He is going home.".to_owned(),
+                better: "He's heading home.".to_owned(),
+            },
+            Vec::new(),
+        ),
+    );
+
+    harness
+        .engine()
+        .improve_streaming("He go home.", &mut |_| {})
+        .expect("improve streaming");
+
+    assert_eq!(harness.history.records(), 1);
+    let entry = harness.history.entries().pop().expect("one history entry");
+    assert_eq!(entry.source, "He go home.");
+    assert_eq!(entry.result, "He's heading home.");
+    assert_eq!(entry.corrected.as_deref(), Some("He is going home."));
+    assert_eq!(entry.mode, Mode::Improve);
+    assert_eq!(entry.provider, ProviderId::Groq);
+    assert_eq!(entry.direction, None);
+}
+
+#[test]
+fn improve_through_the_window_records_once_too() {
     let harness = Harness::new(
         FakeCapture::default(),
         FakeProvider::improving_with(Improvement {
@@ -999,11 +1132,175 @@ fn improve_is_not_recorded_in_history_until_the_history_ticket_owns_it() {
 
     harness
         .engine()
-        .improve_streaming("He go home.", &mut |_| {})
-        .expect("improve streaming");
+        .translate_text("He go home.", Mode::Improve)
+        .expect("improve text");
 
-    assert!(
-        harness.history.entries().is_empty(),
-        "ticket 09 records Improve, with the mode column"
+    assert_eq!(harness.history.records(), 1);
+    let entry = harness.history.entries().pop().expect("one history entry");
+    assert_eq!(entry.mode, Mode::Improve);
+    assert_eq!(entry.result, "He's heading home.");
+    assert_eq!(entry.corrected.as_deref(), Some("He is going home."));
+}
+
+#[test]
+fn a_rejected_improvement_history_write_never_fails_the_improvement() {
+    let harness = Harness::new(
+        FakeCapture::default(),
+        FakeProvider::streaming_improvement(
+            Improvement {
+                corrected: "He is going home.".to_owned(),
+                better: "He's heading home.".to_owned(),
+            },
+            Vec::new(),
+        ),
     );
+    let engine = TranslatorEngine::new(
+        Arc::new(harness.capture.clone()),
+        Arc::new(harness.provider.clone()),
+        Arc::new(harness.speech.clone()),
+        Arc::new(InMemoryHistory::failing_writes_with(
+            translator_core::HistoryError::Unavailable {
+                reason: "the disk is full".to_owned(),
+            },
+        )),
+        Arc::new(harness.settings.clone()),
+        Arc::new(harness.credentials.clone()),
+    );
+
+    let improvement = engine
+        .improve_streaming("He go home.", &mut |_| {})
+        .expect("history is best-effort");
+
+    assert_eq!(improvement.better, "He's heading home.");
+}
+
+fn translation_entry(direction: Option<Direction>) -> HistoryEntry {
+    HistoryEntry {
+        source: "Xin chào".to_owned(),
+        result: "Hello".to_owned(),
+        provider: ProviderId::MyMemory,
+        mode: Mode::Translate,
+        created_at: Timestamp(1_700_000_000),
+        direction,
+        corrected: None,
+    }
+}
+
+#[test]
+fn reopening_a_translation_uses_the_stored_result_and_direction_without_a_provider() {
+    let harness = Harness::new(FakeCapture::default(), provider_saying("ignored"));
+
+    let outcome = harness
+        .engine()
+        .reopen(&translation_entry(Some(Direction {
+            source: Language::vietnamese(),
+            target: Language::english(),
+        })))
+        .expect("reopen the entry");
+
+    match outcome {
+        TextOutcome::Translation(translation) => {
+            assert_eq!(translation.text, "Hello");
+            assert_eq!(translation.provider, ProviderId::MyMemory);
+            assert_eq!(translation.detected_source, Some(Language::vietnamese()));
+            assert_eq!(translation.target, Language::english());
+        }
+        other => panic!("expected a translation, got {other:?}"),
+    }
+    assert!(
+        harness.provider.requests().is_empty(),
+        "reopening must spend no quota"
+    );
+    assert_eq!(
+        harness.history.records(),
+        0,
+        "reopening must not add a history row"
+    );
+}
+
+#[test]
+fn reopening_a_translation_without_a_known_direction_uses_the_saved_target() {
+    let harness = Harness::new(FakeCapture::default(), provider_saying("ignored"));
+
+    let outcome = harness
+        .engine()
+        .reopen(&translation_entry(None))
+        .expect("reopen the entry");
+
+    match outcome {
+        TextOutcome::Translation(translation) => {
+            assert_eq!(translation.target, Language::english());
+            assert_eq!(translation.detected_source, None);
+        }
+        other => panic!("expected a translation, got {other:?}"),
+    }
+}
+
+#[test]
+fn reopening_an_improvement_restores_both_stored_parts_without_a_provider() {
+    let harness = Harness::new(FakeCapture::default(), provider_saying("ignored"));
+    let entry = HistoryEntry {
+        source: "He go home.".to_owned(),
+        result: "He's heading home.".to_owned(),
+        provider: ProviderId::Groq,
+        mode: Mode::Improve,
+        created_at: Timestamp(1_700_000_000),
+        direction: None,
+        corrected: Some("He is going home.".to_owned()),
+    };
+
+    let outcome = harness.engine().reopen(&entry).expect("reopen the entry");
+
+    match outcome {
+        TextOutcome::Improvement(improvement) => {
+            assert_eq!(improvement.corrected, "He is going home.");
+            assert_eq!(improvement.better, "He's heading home.");
+        }
+        other => panic!("expected an improvement, got {other:?}"),
+    }
+    assert!(harness.provider.improve_requests().is_empty());
+    assert_eq!(harness.history.records(), 0);
+}
+
+#[test]
+fn reopening_an_improvement_written_before_the_corrected_part_existed_answers_empty() {
+    let harness = Harness::new(FakeCapture::default(), provider_saying("ignored"));
+    let entry = HistoryEntry {
+        source: "He go home.".to_owned(),
+        result: "He's heading home.".to_owned(),
+        provider: ProviderId::Groq,
+        mode: Mode::Improve,
+        created_at: Timestamp(1_700_000_000),
+        direction: None,
+        corrected: None,
+    };
+
+    let outcome = harness.engine().reopen(&entry).expect("reopen the entry");
+
+    match outcome {
+        TextOutcome::Improvement(improvement) => {
+            assert_eq!(improvement.corrected, "");
+            assert_eq!(improvement.better, "He's heading home.");
+        }
+        other => panic!("expected an improvement, got {other:?}"),
+    }
+}
+
+#[test]
+fn purging_history_removes_rows_older_than_thirty_days() {
+    let harness = Harness::new(FakeCapture::default(), provider_saying("ignored"));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is after the epoch")
+        .as_secs() as i64;
+    let mut entry = translation_entry(None);
+    entry.created_at = Timestamp(now - 31 * 24 * 60 * 60);
+    harness.history.record(&entry).expect("record an old row");
+    entry.created_at = Timestamp(now - 24 * 60 * 60);
+    harness.history.record(&entry).expect("record a recent row");
+
+    let removed = harness.engine().purge_history().expect("purge history");
+
+    assert_eq!(removed, 1);
+    assert_eq!(harness.history.entries().len(), 1);
 }

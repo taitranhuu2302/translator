@@ -18,6 +18,7 @@ export type TranslateResult =
 export type TranslateEvent =
   | { type: "started" }
   | { type: "translated"; translation: Translation }
+  | { type: "restored"; translation: Translation }
   | { type: "failed"; error: EngineError }
   | { type: "cleared" };
 
@@ -40,6 +41,12 @@ export function reduceResult(
     // from an abandoned attempt must not replace what the user is reading.
     case "translated":
       if (state.phase !== "translating") return state;
+      return { phase: "translated", translation: event.translation };
+
+    // A reopened history entry is already an answer: it fills the pane from any
+    // phase without passing through "translating", and the reducer never emits
+    // a request on its behalf.
+    case "restored":
       return { phase: "translated", translation: event.translation };
 
     case "failed":

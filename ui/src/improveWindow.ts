@@ -21,6 +21,7 @@ export type ImproveEvent =
   | { type: "started"; requestId: number }
   | { type: "chunk"; requestId: number; part: ImprovePart; text: string }
   | { type: "done"; requestId: number; improvement: Improvement }
+  | { type: "restored"; requestId: number; improvement: Improvement }
   | { type: "failed"; requestId: number; error: EngineError }
   | { type: "cleared" };
 
@@ -74,6 +75,16 @@ export function reduceImprovement(
         better: event.improvement.better,
       };
     }
+
+    // A reopened history entry fills both sections from any phase: the stored
+    // pair is already the answer, so there is no "improving" step to fake.
+    case "restored":
+      return {
+        phase: "improved",
+        requestId: event.requestId,
+        corrected: event.improvement.corrected,
+        better: event.improvement.better,
+      };
 
     // A failure replaces the pane with words, and only the pane.
     case "failed": {

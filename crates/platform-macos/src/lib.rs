@@ -12,6 +12,7 @@ mod capture;
 mod capture;
 pub mod clipboard;
 mod credentials;
+mod history;
 pub mod pointer;
 mod settings_file;
 #[cfg(target_os = "macos")]
@@ -20,11 +21,12 @@ mod speech;
 #[path = "speech_unsupported.rs"]
 mod speech;
 
+pub use history::MacHistoryStore;
 pub use settings_file::MacSettingsStore;
 
 use translator_core::{
-    CaptureError, CredentialError, CredentialStore, HistoryEntry, HistoryError, HistoryStore,
-    Language, ProviderId, Selection, SelectionCapture, SpeechError, SpeechOutput, Timestamp,
+    CaptureError, CredentialError, CredentialStore, Language, ProviderId, Selection,
+    SelectionCapture, SpeechError, SpeechOutput,
 };
 
 /// Accessibility first, clipboard fallback, secure input refused outright
@@ -61,29 +63,6 @@ pub struct MacSpeechOutput;
 impl SpeechOutput for MacSpeechOutput {
     fn speak(&self, text: &str, language: &Language) -> Result<(), SpeechError> {
         speech::speak(text, language)
-    }
-}
-
-/// SQLite under Application Support. REPLACED IN: ticket 09.
-pub struct MacHistoryStore;
-
-impl HistoryStore for MacHistoryStore {
-    fn record(&self, _entry: &HistoryEntry) -> Result<(), HistoryError> {
-        Err(HistoryError::Unavailable {
-            reason: "history storage lands in ticket 09".to_owned(),
-        })
-    }
-
-    fn search(&self, _query: &str, _limit: usize) -> Result<Vec<HistoryEntry>, HistoryError> {
-        Err(HistoryError::Unavailable {
-            reason: "history storage lands in ticket 09".to_owned(),
-        })
-    }
-
-    fn purge_older_than(&self, _cutoff: Timestamp) -> Result<usize, HistoryError> {
-        Err(HistoryError::Unavailable {
-            reason: "history storage lands in ticket 09".to_owned(),
-        })
     }
 }
 

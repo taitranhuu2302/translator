@@ -150,4 +150,19 @@ describe("the Translate Window result pane", () => {
       }),
     ).toEqual(EMPTY_RESULT);
   });
+
+  it("shows a stored result when an entry is reopened, without translating", () => {
+    expect(
+      reduceResult(EMPTY_RESULT, { type: "restored", translation }),
+    ).toEqual({ phase: "translated", translation });
+
+    // A stored entry replaces whatever was on screen, including a failure.
+    const failed = reduceResult(started(), {
+      type: "failed",
+      error: { provider: "offline" },
+    });
+    expect(
+      reduceResult(failed, { type: "restored", translation }),
+    ).toEqual({ phase: "translated", translation });
+  });
 });

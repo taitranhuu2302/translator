@@ -3,6 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { providerLabel } from "./failures";
 import { formatShortcut, captureFailure, type CaptureFailure } from "./format";
 import {
+  filterHistory,
+  historyModeLabel,
+  relativeTime,
+} from "./historyView";
+import {
   EMPTY_IMPROVEMENT,
   partLabel,
   reduceImprovement,
@@ -16,6 +21,7 @@ import {
   onTranslationError,
   type Direction,
   type EngineError,
+  type HistoryEntry,
   type ImprovePart,
   type Mode,
   type Prefill,
@@ -34,6 +40,16 @@ const FALLBACK_SHORTCUT = "Ctrl+Alt+E";
 
 const IMPROVE_PARTS: ImprovePart[] = ["corrected", "better"];
 
+/** The window's three surfaces. Translate and Improve share the two panes and
+ * only change their labels; History replaces them with the stored entries. */
+type Surface = Mode | "history";
+
+/** How many recent entries the History surface loads. It is a cap, not a page
+ * size: v1 shows recent history, and the search narrows what was loaded. */
+const HISTORY_LIMIT = 500;
+
+const EMPTY_HISTORY = "Nothing here yet — translations and improvements you make will appear here.";
+
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -44,6 +60,14 @@ export function App() {
   const [text, setText] = useState("");
   const [failure, setFailure] = useState<CaptureFailure | null>(null);
   const [mode, setMode] = useState<Mode>("translate");
+  const [surface, setSurface] = useState<Surface>("translate");
+
+  // History is read once when the window opens and again whenever its surface is
+  // opened. The query filters these entries locally, so typing never asks the
+  // engine for anything.
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   // The result pane, the direction this window translates in (null means the
   // saved Language Pair), and whether the Copy button has just been used.
@@ -73,6 +97,7 @@ export function App() {
       setImprovement((state) => reduceImprovement(state, { type: "cleared" }));
       // A new opening starts in Translate, from the saved pair again; Swap never
       // survives it.
+      setSurface("translate");
       setMode("translate");
       setDirection(null);
       setCopied(false);
@@ -80,6 +105,20 @@ export function App() {
       return;
     }
     setFailure(captureFailure(prefill.failure));
+  }, []);
+
+  // The newest entries, unfiltered: the History surface narrows them in memory.
+  // A read that fails leaves the last list alone and says so.
+  const loadHistory = useCallback(() => {
+    ipc
+      .searchHistory("", HISTORY_LIMIT)
+      .then((entries) => {
+        setHistory(entries);
+        setHistoryError(null);
+      })
+      .catch(() => {
+        setHistoryError("History could not be read.");
+      });
   }, []);
 
   const runTranslation = useCallback(
@@ -160,14 +199,56 @@ export function App() {
     }
   };
 
-  // Switching mode keeps an in-flight stream alive in its own pane: the two
-  // results are separate states, so a hidden answer can never land in the pane
-  // of the other mode.
-  const changeMode = (next: Mode) => {
-    if (next === mode) return;
+  // Switching between the two working modes keeps an in-flight stream alive in
+  // its own pane: the two results are separate states, so a hidden answer can
+  // never land in the pane of the other mode. Opening History re-reads it first.
+  const selectSurface = (next: Surface) => {
+    if (next === "history") {
+      setSurface("history");
+      loadHistory();
+      return;
+    }
+    if (next === mode && surface === next) return;
     setMode(next);
+    setSurface(next);
     setCopied(false);
     setCopiedPart(null);
+  };
+
+  // A stored entry is every part of a result: clicking it puts its source back
+  // in the input, opens the mode it was made in, restores a known direction, and
+  // fills that pane with the answer the engine shaped from the row. No provider
+  // is called and no new row is written.
+  const openHistoryEntry = async (entry: HistoryEntry) => {
+    const id = ++requestId.current;
+    setMode(entry.mode);
+    setSurface(entry.mode);
+    setText(entry.source);
+    setFailure(null);
+    setCopied(false);
+    setCopiedPart(null);
+    setDirection(entry.mode === "translate" ? entry.direction : null);
+    try {
+      const outcome = await ipc.reopenHistoryEntry(entry);
+      if (requestId.current !== id) return;
+      if ("translation" in outcome) {
+        setResult((state) =>
+          reduceResult(state, { type: "restored", translation: outcome.translation }),
+        );
+      } else {
+        setImprovement((state) =>
+          reduceImprovement(state, {
+            type: "restored",
+            requestId: id,
+            improvement: outcome.improvement,
+          }),
+        );
+      }
+    } catch {
+      if (requestId.current === id) {
+        setHistoryError("That entry could not be reopened.");
+      }
+    }
   };
 
   // Swap reverses the translation on screen: its text becomes the new source and
@@ -322,6 +403,12 @@ export function App() {
     };
   }, []);
 
+  // History survives restarts in SQLite, so the list is read at launch too, not
+  // only when its tab is opened.
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
+
   const translateShortcut = formatShortcut(
     settings?.shortcuts.translate_window ?? FALLBACK_SHORTCUT,
   );
@@ -384,20 +471,35 @@ export function App() {
         />
       ) : null}
 
-      <div className="mode-switch" role="tablist" aria-label="Mode">
-        {(["translate", "improve"] as Mode[]).map((option) => (
+      <div className="mode-switch" role="tablist" aria-label="View">
+        {(["translate", "improve", "history"] as Surface[]).map((option) => (
           <button
             key={option}
             role="tab"
-            aria-selected={mode === option}
-            className={mode === option ? "tab active" : "tab"}
-            onClick={() => changeMode(option)}
+            aria-selected={surface === option}
+            className={surface === option ? "tab active" : "tab"}
+            onClick={() => selectSurface(option)}
           >
-            {option === "translate" ? "Translate" : "Improve"}
+            {option === "translate"
+              ? "Translate"
+              : option === "improve"
+                ? "Improve"
+                : "History"}
           </button>
         ))}
       </div>
 
+      {surface === "history" ? (
+        <HistoryPane
+          entries={history}
+          query={historyQuery}
+          error={historyError}
+          onQueryChange={setHistoryQuery}
+          onOpen={(entry) => {
+            void openHistoryEntry(entry);
+          }}
+        />
+      ) : (
       <div className="panes">
         <section className="pane">
           <h2>Source</h2>
@@ -525,6 +627,7 @@ export function App() {
           )}
         </section>
       </div>
+      )}
 
       {settings ? (
         <details className="provider-details">
@@ -540,6 +643,76 @@ export function App() {
         />
       ) : null}
     </main>
+  );
+}
+
+function HistoryPane({
+  entries,
+  query,
+  error,
+  onQueryChange,
+  onOpen,
+}: {
+  entries: HistoryEntry[];
+  query: string;
+  error: string | null;
+  onQueryChange: (value: string) => void;
+  onOpen: (entry: HistoryEntry) => void;
+}) {
+  // Filtering is local and instant: the entries were read once, and typing must
+  // never ask the engine (or a provider) anything.
+  const visible = filterHistory(entries, query);
+  const now = Math.floor(Date.now() / 1000);
+
+  return (
+    <div className="panes single">
+      <section className="pane history-pane">
+        <div className="pane-head">
+          <h2>History</h2>
+          <span className="muted small">Kept on this Mac for 30 days</span>
+        </div>
+
+        <input
+          type="search"
+          className="history-search"
+          aria-label="Search history"
+          placeholder="Search either side…"
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          spellCheck={false}
+          autoFocus
+        />
+
+        {error ? <p className="notice error">{error}</p> : null}
+
+        {visible.length === 0 ? (
+          <p className="empty">{EMPTY_HISTORY}</p>
+        ) : (
+          <ul className="history-list">
+            {visible.map((entry, index) => (
+              <li key={`${entry.created_at}-${index}`}>
+                <button
+                  type="button"
+                  className="history-entry"
+                  onClick={() => onOpen(entry)}
+                >
+                  <span className="history-meta">
+                    <span className="history-mode">
+                      {historyModeLabel(entry.mode)}
+                    </span>
+                    <span className="muted small">
+                      {relativeTime(entry.created_at, now)}
+                    </span>
+                  </span>
+                  <span className="history-source">{entry.source}</span>
+                  <span className="history-result">{entry.result}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
   );
 }
 

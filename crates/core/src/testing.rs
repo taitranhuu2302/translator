@@ -495,6 +495,7 @@ pub struct InMemoryHistory {
 struct HistoryState {
     entries: Vec<HistoryEntry>,
     write_error: Option<HistoryError>,
+    records: usize,
 }
 
 impl InMemoryHistory {
@@ -507,11 +508,18 @@ impl InMemoryHistory {
     pub fn entries(&self) -> Vec<HistoryEntry> {
         self.state.lock().unwrap().entries.clone()
     }
+
+    /// How many times `record` was called, including rejected writes. It is what
+    /// proves one translation writes one row, not two.
+    pub fn records(&self) -> usize {
+        self.state.lock().unwrap().records
+    }
 }
 
 impl HistoryStore for InMemoryHistory {
     fn record(&self, entry: &HistoryEntry) -> Result<(), HistoryError> {
         let mut state = self.state.lock().unwrap();
+        state.records += 1;
         if let Some(error) = &state.write_error {
             return Err(error.clone());
         }

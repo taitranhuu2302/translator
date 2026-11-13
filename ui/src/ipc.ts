@@ -106,6 +106,11 @@ export interface HistoryEntry {
   provider: ProviderId;
   mode: Mode;
   created_at: number;
+  /** The direction the result was produced in, when it was known. */
+  direction: Direction | null;
+  /** Improve's corrected sentence; null for a translation, and for rows written
+   * before Improve stored both parts. */
+  corrected: string | null;
 }
 
 export interface ProviderStatus {
@@ -222,6 +227,11 @@ export const ipc = {
     call("save_settings", { settings }),
   searchHistory: (query: string, limit: number): Promise<HistoryEntry[]> =>
     call("search_history", { query, limit }),
+
+  /** Shape a stored entry for the window again. It reads no provider and
+   * writes no history row. */
+  reopenHistoryEntry: (entry: HistoryEntry): Promise<TextOutcome> =>
+    call("reopen_history_entry", { entry }),
 
   /** The Selection captured when the window was opened, or null if none is
    * waiting. Capture happens before the window is shown, so this is the only

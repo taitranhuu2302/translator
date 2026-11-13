@@ -564,3 +564,82 @@ button.primary {
   min-height: 0;
   overflow-y: auto;
 }
+
+/* --- History -------------------------------------------------------------- */
+
+/* The history list is one column, not the two working panes. */
+.panes.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.history-pane {
+  gap: 10px;
+  overflow: hidden;
+}
+
+.history-search {
+  padding: 6px 9px;
+  border: 1px solid var(--edge);
+  border-radius: 7px;
+  background: Canvas;
+  color: CanvasText;
+  font: inherit;
+  font-size: 13px;
+}
+
+.history-search:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.history-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.history-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 11px;
+  text-align: left;
+}
+
+.history-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.history-mode {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: GrayText;
+}
+
+.history-source,
+.history-result {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-source {
+  font-size: 13px;
+}
+
+.history-result {
+  color: GrayText;
+  font-size: 12px;
+}
