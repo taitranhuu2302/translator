@@ -5,5 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "The only crate that may touch macOS APIs; implements the core ports"
 
+[build-dependencies]
+cc = "1"
+
 [dependencies]
+serde_json = { workspace = true }
 translator-core = { workspace = true }

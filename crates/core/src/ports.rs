@@ -13,6 +13,17 @@ use crate::model::{
 pub trait SelectionCapture: Send + Sync {
     fn read_selection(&self) -> Result<Selection, CaptureError>;
     fn replace_selection(&self, text: &str) -> Result<(), CaptureError>;
+
+    /// Whether the platform has granted this app the permission capture needs.
+    /// Platforms without such a permission answer `true`.
+    fn accessibility_granted(&self) -> bool;
+
+    /// Ask the platform to prompt for the permission. Answers whether it is
+    /// granted now; the user may still be deciding.
+    fn request_accessibility(&self) -> bool;
+
+    /// Open the platform's settings pane where the permission is granted.
+    fn open_accessibility_settings(&self) -> Result<(), CaptureError>;
 }
 
 /// One request to a translation provider. `source` is `None` when the direction is

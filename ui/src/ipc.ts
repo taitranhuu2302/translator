@@ -32,7 +32,21 @@ export interface Settings {
   language_pair: LanguagePair;
   shortcuts: ShortcutBindings;
   start_at_login: boolean;
+  onboarding_seen: boolean;
 }
+
+/** The text the user selected when a shortcut fired. */
+export interface Selection {
+  text: string;
+}
+
+/**
+ * What the Translate Window starts with. A missing Selection is an empty
+ * `selection`, never a failure; a missing permission is a typed failure.
+ */
+export type Prefill =
+  | { selection: Selection }
+  | { failure: EngineError };
 
 export interface Translation {
   text: string;
@@ -136,6 +150,22 @@ export const ipc = {
     call("save_settings", { settings }),
   searchHistory: (query: string, limit: number): Promise<HistoryEntry[]> =>
     call("search_history", { query, limit }),
+
+  /** The Selection captured when the window was opened, or null if none is
+   * waiting. Capture happens before the window is shown, so this is the only
+   * way the input pane learns what was selected. */
+  takeSelectionPrefill: (): Promise<Prefill | null> =>
+    call("take_selection_prefill"),
+
+  accessibilityGranted: (): Promise<boolean> => call("accessibility_granted"),
+
+  /** Ask macOS to prompt for Accessibility; resolves to the state after asking. */
+  requestAccessibility: (): Promise<boolean> => call("request_accessibility"),
+
+  /** Open System Settings at Privacy & Security → Accessibility. */
+  openAccessibilitySettings: (): Promise<void> => call("open_accessibility_settings"),
+
+  completeOnboarding: (): Promise<Settings> => call("complete_onboarding"),
 };
 
 // --- Events ----------------------------------------------------------------
@@ -168,7 +198,14 @@ export const EVENTS = {
   translationDone: "translation-done",
   translationError: "translation-error",
   providerStatus: "provider-status",
+  selectionPrefill: "selection-prefill",
 } as const;
+
+/** Emitted after the window is opened from a Selection. The payload is empty:
+ * call `takeSelectionPrefill` to claim what was captured. */
+export function onSelectionPrefill(handler: () => void): Promise<UnlistenFn> {
+  return listen(EVENTS.selectionPrefill, () => handler());
+}
 
 export function onTranslationChunk(
   handler: (payload: TranslationChunk) => void,

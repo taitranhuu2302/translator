@@ -73,12 +73,17 @@ pub struct HistoryEntry {
 #[serde(transparent)]
 pub struct Timestamp(pub i64);
 
-/// The pair, the shortcut bindings and the start-at-login preference.
+/// The pair, the shortcut bindings, the start-at-login preference and whether the
+/// first-launch onboarding has been dismissed.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     pub language_pair: LanguagePair,
     pub shortcuts: ShortcutBindings,
     pub start_at_login: bool,
+    /// Written once the user dismisses the onboarding. Settings files written
+    /// before onboarding existed load as `false`, which is what first launch means.
+    #[serde(default)]
+    pub onboarding_seen: bool,
 }
 
 /// User-editable key combinations, stored as their display strings so a later

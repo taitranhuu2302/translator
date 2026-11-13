@@ -1,30 +1,49 @@
 //! The only crate that may touch macOS APIs: AppKit, ApplicationServices,
 //! AVFoundation and the Keychain belong here, never in `core` or the UI.
 //!
-//! Ticket 01 lands the port shapes and the single place the shell builds them.
-//! Each implementation below is an explicit typed failure until the ticket that
-//! owns it replaces it — nothing here silently succeeds.
+//! Ticket 02 lands Selection capture and the settings file it needs for
+//! onboarding. The ports still to come are explicit typed failures rather than
+//! code paths that silently succeed.
+
+#[cfg(target_os = "macos")]
+mod capture;
+#[cfg(not(target_os = "macos"))]
+#[path = "capture_unsupported.rs"]
+mod capture;
+mod settings_file;
+
+pub use settings_file::MacSettingsStore;
 
 use translator_core::{
     CaptureError, CredentialError, CredentialStore, HistoryEntry, HistoryError, HistoryStore,
-    ProviderId, Selection, SelectionCapture, Settings, SettingsError, SettingsStore, SpeechError,
-    SpeechOutput, Timestamp,
+    ProviderId, Selection, SelectionCapture, SpeechError, SpeechOutput, Timestamp,
 };
 
-/// Accessibility first, clipboard fallback. REPLACED IN: ticket 02.
+/// Accessibility first, clipboard fallback, secure input refused outright
+/// (docs/adr/0002-accessibility-first-clipboard-fallback.md).
 pub struct MacSelectionCapture;
 
 impl SelectionCapture for MacSelectionCapture {
     fn read_selection(&self) -> Result<Selection, CaptureError> {
-        Err(CaptureError::Unavailable {
-            reason: "Accessibility capture lands in ticket 02".to_owned(),
-        })
+        capture::read_selection()
     }
 
     fn replace_selection(&self, _text: &str) -> Result<(), CaptureError> {
         Err(CaptureError::Unavailable {
             reason: "Replace lands in ticket 05".to_owned(),
         })
+    }
+
+    fn accessibility_granted(&self) -> bool {
+        capture::accessibility_granted()
+    }
+
+    fn request_accessibility(&self) -> bool {
+        capture::request_accessibility()
+    }
+
+    fn open_accessibility_settings(&self) -> Result<(), CaptureError> {
+        capture::open_accessibility_settings()
     }
 }
 
@@ -58,22 +77,6 @@ impl HistoryStore for MacHistoryStore {
     fn purge_older_than(&self, _cutoff: Timestamp) -> Result<usize, HistoryError> {
         Err(HistoryError::Unavailable {
             reason: "history storage lands in ticket 09".to_owned(),
-        })
-    }
-}
-
-/// The local settings file. REPLACED IN: ticket 10.
-pub struct MacSettingsStore;
-
-impl SettingsStore for MacSettingsStore {
-    fn load(&self) -> Result<Settings, SettingsError> {
-        // Defaults come from `core`; the file lands with ticket 10.
-        Ok(Settings::default())
-    }
-
-    fn save(&self, _settings: &Settings) -> Result<(), SettingsError> {
-        Err(SettingsError::Unavailable {
-            reason: "the settings file lands in ticket 10".to_owned(),
         })
     }
 }

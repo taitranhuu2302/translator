@@ -9,7 +9,7 @@ use translator_core::testing::{
 };
 use translator_core::{
     CaptureError, EngineError, Improvement, Language, LanguagePair, Mode, ProviderId,
-    ProviderTranslation, Settings, TextOutcome, TranslateRequest, TranslatorEngine,
+    ProviderTranslation, Selection, Settings, TextOutcome, TranslateRequest, TranslatorEngine,
 };
 
 struct Harness {
@@ -159,6 +159,111 @@ fn provider_status_reports_which_keys_are_stored() {
 
     assert!(status.azure_configured);
     assert!(!status.groq_configured);
+}
+
+#[test]
+fn the_translate_window_opens_with_the_selection_in_its_input() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào, thế giới"),
+        provider_saying("Hello"),
+    );
+
+    let selection = harness
+        .engine()
+        .selection_for_window()
+        .expect("selection for the window");
+
+    assert_eq!(selection, Selection::new("Xin chào, thế giới"));
+    assert_eq!(harness.capture.reads(), 1);
+    assert!(harness.provider.requests().is_empty());
+    assert!(harness.history.entries().is_empty());
+}
+
+#[test]
+fn the_translate_window_opens_empty_when_nothing_is_selected() {
+    let harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+
+    let selection = harness
+        .engine()
+        .selection_for_window()
+        .expect("nothing selected is not an error");
+
+    assert_eq!(selection, Selection::new(""));
+    assert!(harness.provider.requests().is_empty());
+}
+
+#[test]
+fn the_translate_window_reports_a_missing_accessibility_grant_instead_of_reading() {
+    let harness = Harness::new(
+        FakeCapture::failing_reads_with(CaptureError::NoAccessibility),
+        provider_saying("Hello"),
+    );
+
+    let error = harness.engine().selection_for_window().unwrap_err();
+
+    assert_eq!(error, EngineError::Capture(CaptureError::NoAccessibility));
+    assert!(harness.provider.requests().is_empty());
+}
+
+#[test]
+fn secure_input_stops_the_translate_window_before_any_text_reaches_a_provider() {
+    let harness = Harness::new(
+        FakeCapture::failing_reads_with(CaptureError::SecureInput),
+        provider_saying("Hello"),
+    );
+
+    let error = harness.engine().selection_for_window().unwrap_err();
+
+    assert_eq!(error, EngineError::Capture(CaptureError::SecureInput));
+    assert!(harness.provider.requests().is_empty());
+    assert!(harness.history.entries().is_empty());
+}
+
+#[test]
+fn the_accessibility_state_comes_from_the_capture_port() {
+    let denied = Harness::new(FakeCapture::default().not_granted(), provider_saying("Hello"));
+    let granted = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+
+    assert!(!denied.engine().accessibility_granted());
+    assert!(granted.engine().accessibility_granted());
+}
+
+#[test]
+fn requesting_accessibility_asks_the_platform_and_reports_the_result() {
+    let harness = Harness::new(
+        FakeCapture::default().granted_after_prompt(),
+        provider_saying("Hello"),
+    );
+
+    assert!(!harness.engine().accessibility_granted());
+    assert!(harness.engine().request_accessibility());
+    assert_eq!(harness.capture.accessibility_requests(), 1);
+    assert!(harness.engine().accessibility_granted());
+}
+
+#[test]
+fn opening_the_accessibility_settings_pane_goes_through_the_platform() {
+    let harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+
+    harness
+        .engine()
+        .open_accessibility_settings()
+        .expect("open settings pane");
+
+    assert_eq!(harness.capture.settings_panes_opened(), 1);
+}
+
+#[test]
+fn onboarding_stays_unseen_until_it_is_completed_and_the_flag_persists() {
+    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+
+    assert!(!harness.engine().settings().unwrap().onboarding_seen);
+
+    harness.engine().complete_onboarding().expect("complete onboarding");
+
+    assert!(harness.settings.current().onboarding_seen);
+    assert!(harness.engine().settings().unwrap().onboarding_seen);
+    assert!(harness.engine().complete_onboarding().is_ok());
 }
 
 #[test]

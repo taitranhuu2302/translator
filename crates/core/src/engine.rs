@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::error::EngineError;
+use crate::error::{CaptureError, EngineError};
 use crate::language::LanguagePair;
 use crate::model::{
     HistoryEntry, Mode, ProviderId, ProviderStatus, QuickTranslation, ReadAloud, Replacement,
-    Settings, TextOutcome, Timestamp, Translation,
+    Selection, Settings, TextOutcome, Timestamp, Translation,
 };
 use crate::ports::{
     CredentialStore, HistoryStore, ImproveRequest, SelectionCapture, SettingsStore, SpeechOutput,
@@ -75,6 +75,34 @@ impl TranslatorEngine {
         })
     }
 
+    /// The Translate Window opens with the Selection already in its input. An
+    /// empty Selection is an empty input, not a failure: pressing the shortcut
+    /// with nothing selected must not look like the app broke.
+    pub fn selection_for_window(&self) -> Result<Selection, EngineError> {
+        match self.capture.read_selection() {
+            Ok(selection) => Ok(selection),
+            Err(CaptureError::NothingSelected) => Ok(Selection::new("")),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Whether the platform has granted the permission Selection capture needs.
+    pub fn accessibility_granted(&self) -> bool {
+        self.capture.accessibility_granted()
+    }
+
+    /// Ask the platform to prompt for the permission, answering whether it is
+    /// granted now. The window re-checks this when it regains focus, so a grant
+    /// made in System Settings takes effect without relaunching the app.
+    pub fn request_accessibility(&self) -> bool {
+        self.capture.request_accessibility()
+    }
+
+    /// Open the settings pane where the permission is granted.
+    pub fn open_accessibility_settings(&self) -> Result<(), EngineError> {
+        Ok(self.capture.open_accessibility_settings()?)
+    }
+
     /// Read Aloud: speak the Selection, never the translation.
     pub fn read_aloud(&self) -> Result<ReadAloud, EngineError> {
         let selection = self.capture.read_selection()?;
@@ -119,6 +147,18 @@ impl TranslatorEngine {
 
     pub fn save_settings(&self, settings: Settings) -> Result<(), EngineError> {
         Ok(self.settings.save(&settings)?)
+    }
+
+    /// Dismiss the first-launch onboarding for good, and answer the settings the
+    /// app now holds.
+    pub fn complete_onboarding(&self) -> Result<Settings, EngineError> {
+        let mut settings = self.settings.load()?;
+        if settings.onboarding_seen {
+            return Ok(settings);
+        }
+        settings.onboarding_seen = true;
+        self.settings.save(&settings)?;
+        Ok(settings)
     }
 
     pub fn history(&self, query: &str, limit: usize) -> Result<Vec<HistoryEntry>, EngineError> {

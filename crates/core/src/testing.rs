@@ -24,13 +24,32 @@ pub struct FakeCapture {
     state: Arc<Mutex<CaptureState>>,
 }
 
-#[derive(Default)]
 struct CaptureState {
     selection: Option<Selection>,
     read_error: Option<CaptureError>,
     write_error: Option<CaptureError>,
     reads: usize,
     writes: Vec<String>,
+    accessibility_granted: bool,
+    prompt_grants_accessibility: bool,
+    accessibility_requests: usize,
+    settings_panes_opened: usize,
+}
+
+impl Default for CaptureState {
+    fn default() -> Self {
+        Self {
+            selection: None,
+            read_error: None,
+            write_error: None,
+            reads: 0,
+            writes: Vec::new(),
+            accessibility_granted: true,
+            prompt_grants_accessibility: true,
+            accessibility_requests: 0,
+            settings_panes_opened: 0,
+        }
+    }
 }
 
 impl FakeCapture {
@@ -51,12 +70,38 @@ impl FakeCapture {
         self
     }
 
+    /// Accessibility denied, and the system prompt will keep it denied.
+    pub fn not_granted(self) -> Self {
+        let mut state = self.state.lock().unwrap();
+        state.accessibility_granted = false;
+        state.prompt_grants_accessibility = false;
+        drop(state);
+        self
+    }
+
+    /// Accessibility denied until the user answers the system prompt.
+    pub fn granted_after_prompt(self) -> Self {
+        let mut state = self.state.lock().unwrap();
+        state.accessibility_granted = false;
+        state.prompt_grants_accessibility = true;
+        drop(state);
+        self
+    }
+
     pub fn reads(&self) -> usize {
         self.state.lock().unwrap().reads
     }
 
     pub fn writes(&self) -> Vec<String> {
         self.state.lock().unwrap().writes.clone()
+    }
+
+    pub fn accessibility_requests(&self) -> usize {
+        self.state.lock().unwrap().accessibility_requests
+    }
+
+    pub fn settings_panes_opened(&self) -> usize {
+        self.state.lock().unwrap().settings_panes_opened
     }
 }
 
@@ -79,6 +124,24 @@ impl SelectionCapture for FakeCapture {
             return Err(error.clone());
         }
         state.writes.push(text.to_owned());
+        Ok(())
+    }
+
+    fn accessibility_granted(&self) -> bool {
+        self.state.lock().unwrap().accessibility_granted
+    }
+
+    fn request_accessibility(&self) -> bool {
+        let mut state = self.state.lock().unwrap();
+        state.accessibility_requests += 1;
+        if state.prompt_grants_accessibility {
+            state.accessibility_granted = true;
+        }
+        state.accessibility_granted
+    }
+
+    fn open_accessibility_settings(&self) -> Result<(), CaptureError> {
+        self.state.lock().unwrap().settings_panes_opened += 1;
         Ok(())
     }
 }
