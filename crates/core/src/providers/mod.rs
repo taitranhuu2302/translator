@@ -15,10 +15,6 @@ pub use improve_stream::ImprovementStream;
 pub use ladder::ProviderLadder;
 pub use mymemory::MyMemoryProvider;
 
-use crate::error::ProviderError;
-use crate::model::{Improvement, ProviderTranslation};
-use crate::ports::{ImproveRequest, TranslateRequest, TranslationProvider};
-
 /// Percent-encode one query component with the RFC 3986 unreserved set. Shared
 /// by the providers so a language code or a piece of text cannot break the URL.
 pub(crate) fn encode_query_component(value: &str) -> String {
@@ -37,19 +33,4 @@ pub(crate) fn encode_query_component(value: &str) -> String {
         }
     }
     encoded
-}
-
-/// Answers every request with a typed "not configured" failure. Kept for the
-/// shell's first-run wiring and for tests that need a provider that never
-/// pretends to have translated anything.
-pub struct UnconfiguredProvider;
-
-impl TranslationProvider for UnconfiguredProvider {
-    fn translate(&self, _request: &TranslateRequest) -> Result<ProviderTranslation, ProviderError> {
-        Err(ProviderError::NotConfigured)
-    }
-
-    fn improve(&self, _request: &ImproveRequest) -> Result<Improvement, ProviderError> {
-        Err(ProviderError::NotConfigured)
-    }
 }

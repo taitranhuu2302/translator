@@ -129,7 +129,8 @@ mod tests {
     use crate::error::AuthFailure;
     use crate::language::Language;
     use crate::model::{ImprovePart, Improvement};
-    use crate::testing::FakeProvider;
+    use crate::providers::groq::GroqProvider;
+    use crate::testing::{FakeCredentials, FakeHttpClient, FakeProvider};
 
     fn request() -> TranslateRequest {
         TranslateRequest {
@@ -466,5 +467,34 @@ mod tests {
                 .expect_err("an empty ladder has no answer"),
             ProviderError::NotConfigured
         );
+    }
+
+    #[test]
+    fn an_unconfigured_azure_and_a_down_mymemory_fall_through_to_groq_translation() {
+        // The real Groq provider at the end of the ladder, so this proves the
+        // actual translation fallback rather than a fake answering in its place.
+        let azure = FakeProvider::default(); // no key: NotConfigured
+        let my_memory = FakeProvider::default().failing_with(ProviderError::Offline);
+        let http = FakeHttpClient::responding_with(
+            200,
+            r#"{"choices":[{"message":{"content":"Xin chào"}}]}"#,
+        );
+        let groq = GroqProvider::new(
+            Arc::new(http.clone()),
+            Arc::new(FakeCredentials::with_secret(ProviderId::Groq, "groq-key")),
+        );
+        let ladder = ProviderLadder::new(vec![
+            (ProviderId::Azure, Arc::new(azure.clone())),
+            (ProviderId::MyMemory, Arc::new(my_memory.clone())),
+            (ProviderId::Groq, Arc::new(groq)),
+        ]);
+
+        let answer = ladder.translate(&request()).expect("Groq translates");
+
+        assert_eq!(answer, translation("Xin chào", ProviderId::Groq));
+        assert_eq!(azure.requests().len(), 1);
+        assert_eq!(my_memory.requests().len(), 1);
+        assert_eq!(http.requests().len(), 1, "Groq was asked once");
+        assert!(ladder.skipped().is_empty(), "nothing here is a session ban");
     }
 }

@@ -19,6 +19,7 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use crate::error::{AuthFailure, HttpError, ProviderError};
+use crate::language::Language;
 use crate::model::{ImproveDelta, Improvement, ProviderId, ProviderTranslation};
 use crate::ports::{
     CredentialStore, HttpClient, HttpMethod, HttpRequest, ImproveRequest, TranslateRequest,
@@ -65,6 +66,20 @@ impl GroqProvider {
         }
     }
 
+    /// Translation's key lookup deliberately answers `None` rather than
+    /// `MissingKey`: the ladder has keyless rungs, so an unconfigured Groq must
+    /// fall through quietly instead of ending the ladder with "Groq needs an
+    /// API key". A key store that cannot be read is still a typed failure.
+    fn translation_key(&self) -> Result<Option<String>, ProviderError> {
+        match self.credentials.get(ProviderId::Groq) {
+            Ok(Some(key)) if !key.trim().is_empty() => Ok(Some(key)),
+            Ok(_) => Ok(None),
+            Err(error) => Err(ProviderError::Unavailable {
+                reason: format!("the Groq key could not be read: {error}"),
+            }),
+        }
+    }
+
     fn body(&self, text: &str) -> Result<String, ProviderError> {
         let content = format!("{PROMPT}\n\nText:\n{text}");
         serde_json::to_string(&serde_json::json!({
@@ -93,13 +108,96 @@ impl GroqProvider {
             ("Authorization".to_owned(), format!("Bearer {key}")),
         ]
     }
+
+    /// Translation is one ordinary (non-streaming) chat completion. The body
+    /// carries only what the model needs: the text, and the language to put it
+    /// in. The source is named only when the engine resolved one.
+    fn translation_body(&self, request: &TranslateRequest) -> Result<String, ProviderError> {
+        if request.target.code().trim().is_empty() {
+            // The engine always resolves a Target before asking. Without one
+            // there is nothing to translate into, so let the ladder move on.
+            return Err(ProviderError::NotConfigured);
+        }
+        let source = match &request.source {
+            Some(language) => format!(" from {}", language_label(language)),
+            None => String::new(),
+        };
+        let content = format!(
+            "Translate the text below{source} into {}. \
+             Return only the translation, with no commentary.\n\nText:\n{}",
+            language_label(&request.target),
+            request.text
+        );
+        serde_json::to_string(&serde_json::json!({
+            "model": MODEL,
+            "messages": [{ "role": "user", "content": content }],
+            "temperature": 0,
+            "stream": false,
+        }))
+        .map_err(|error| ProviderError::MalformedResponse {
+            provider: ProviderId::Groq,
+            message: format!("the request body could not be built: {error}"),
+        })
+    }
+}
+
+/// The language as the prompt should name it. v1 only offers English and
+/// Vietnamese; anything else is named by its own code rather than guessed.
+fn language_label(language: &Language) -> String {
+    match language.code() {
+        "en" => "English".to_owned(),
+        "vi" => "Vietnamese".to_owned(),
+        other => other.to_owned(),
+    }
 }
 
 impl TranslationProvider for GroqProvider {
-    /// Model translation is out of scope for v1: Groq exists for Improve only,
-    /// and saying so lets the ladder move on to a translation provider.
-    fn translate(&self, _request: &TranslateRequest) -> Result<ProviderTranslation, ProviderError> {
-        Err(ProviderError::NotConfigured)
+    /// Translate through Groq, the ladder's last rung for text the others could
+    /// not handle. Without a key it answers `NotConfigured` (never
+    /// `MissingKey`) so the ladder reports the real reason and still falls
+    /// through. The prompt names no detected source: the engine resolved the
+    /// direction, and the answer is exactly the model's translation.
+    fn translate(&self, request: &TranslateRequest) -> Result<ProviderTranslation, ProviderError> {
+        if request.text.trim().is_empty() {
+            return Ok(ProviderTranslation {
+                text: String::new(),
+                provider: ProviderId::Groq,
+                detected_source: None,
+            });
+        }
+
+        // Before the network, so a keyless translation costs nothing.
+        let Some(key) = self.translation_key()? else {
+            return Err(ProviderError::NotConfigured);
+        };
+        let body = self.translation_body(request)?;
+        let http_request = HttpRequest {
+            method: HttpMethod::Post,
+            url: ENDPOINT.to_owned(),
+            headers: self.headers(&key),
+            body: Some(body),
+        };
+
+        let response = self.http.execute(&http_request).map_err(map_transport)?;
+        if !(200..=299).contains(&response.status) {
+            return Err(failure_status(response.status, &response.body));
+        }
+        let answer: ChatAnswer = serde_json::from_str(&response.body).map_err(|error| {
+            malformed(format!("the answer was not the expected shape: {error}"))
+        })?;
+        let text = answer
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|choice| choice.message.content)
+            .map(|content| content.trim().to_owned())
+            .filter(|content| !content.is_empty())
+            .ok_or_else(|| malformed("the answer carried no translation text"))?;
+        Ok(ProviderTranslation {
+            text,
+            provider: ProviderId::Groq,
+            detected_source: None,
+        })
     }
 
     fn improve(&self, request: &ImproveRequest) -> Result<Improvement, ProviderError> {
@@ -336,6 +434,24 @@ struct StreamEvent {
     choices: Vec<StreamChoice>,
 }
 
+/// A non-streaming chat completion. The fields are required: an envelope
+/// without `choices`, or a message without content, is a malformed answer rather
+/// than an empty translation.
+#[derive(Deserialize)]
+struct ChatAnswer {
+    choices: Vec<ChatChoice>,
+}
+
+#[derive(Deserialize)]
+struct ChatChoice {
+    message: ChatMessage,
+}
+
+#[derive(Deserialize)]
+struct ChatMessage {
+    content: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct StreamChoice {
     #[serde(default)]
@@ -392,6 +508,7 @@ fn decode_line(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::language::Language;
     use crate::model::ImprovePart;
     use crate::testing::{FakeCredentials, FakeHttpClient};
 
@@ -410,6 +527,221 @@ mod tests {
         ImproveRequest {
             text: text.to_owned(),
         }
+    }
+
+    fn translation_request(
+        text: &str,
+        source: Option<Language>,
+        target: Language,
+    ) -> TranslateRequest {
+        TranslateRequest {
+            text: text.to_owned(),
+            source,
+            target,
+        }
+    }
+
+    fn chat_answer(content: &str) -> String {
+        serde_json::json!({
+            "choices": [{ "message": { "content": content } }]
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn a_translation_without_a_key_falls_through_as_not_configured() {
+        // Translation has a keyless rung, so an unconfigured Groq must not
+        // present itself as a missing key: that would end the ladder with a
+        // misleading "Groq needs an API key" instead of falling through.
+        let http = FakeHttpClient::responding_with(200, chat_answer("Xin chào"));
+        let error = provider_with(&http, &FakeCredentials::default())
+            .translate(&translation_request(
+                "Hello",
+                Some(Language::english()),
+                Language::vietnamese(),
+            ))
+            .expect_err("there is no key");
+
+        assert_eq!(error, ProviderError::NotConfigured);
+        assert!(
+            http.requests().is_empty(),
+            "a keyless translation costs no request"
+        );
+    }
+
+    #[test]
+    fn translating_blank_text_answers_empty_without_a_request() {
+        let http = FakeHttpClient::responding_with(200, chat_answer("unused"));
+        let answer = keyed(&http)
+            .translate(&translation_request(
+                "   \n",
+                Some(Language::english()),
+                Language::vietnamese(),
+            ))
+            .expect("blank text has nothing to translate");
+
+        assert_eq!(
+            answer,
+            ProviderTranslation {
+                text: String::new(),
+                provider: ProviderId::Groq,
+                detected_source: None,
+            }
+        );
+        assert!(http.requests().is_empty());
+    }
+
+    #[test]
+    fn a_translation_asks_groq_for_the_target_text_and_nothing_else() {
+        let http = FakeHttpClient::responding_with(200, chat_answer("  Chào buổi sáng  "));
+        let answer = keyed(&http)
+            .translate(&translation_request(
+                "Good morning",
+                Some(Language::english()),
+                Language::vietnamese(),
+            ))
+            .expect("Groq translates");
+
+        assert_eq!(
+            answer,
+            ProviderTranslation {
+                text: "Chào buổi sáng".to_owned(),
+                provider: ProviderId::Groq,
+                detected_source: None,
+            }
+        );
+
+        let requests = http.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].method, HttpMethod::Post);
+        assert_eq!(requests[0].url, ENDPOINT);
+        assert!(requests[0]
+            .headers
+            .contains(&("Authorization".to_owned(), "Bearer groq-key".to_owned())));
+
+        let body: serde_json::Value =
+            serde_json::from_str(requests[0].body.as_deref().expect("a body"))
+                .expect("the body is JSON");
+        assert_eq!(body["model"], MODEL);
+        assert_eq!(body["stream"], false);
+        assert_eq!(body["temperature"], 0);
+        let prompt = body["messages"][0]["content"]
+            .as_str()
+            .expect("a user message");
+        assert!(prompt.contains("Vietnamese"), "{prompt}");
+        assert!(prompt.contains("from English"), "{prompt}");
+        assert!(prompt.contains("Return only the translation"), "{prompt}");
+        assert!(prompt.contains("Good morning"), "{prompt}");
+    }
+
+    #[test]
+    fn the_translation_prompt_names_a_source_language_only_when_one_was_given() {
+        let http = FakeHttpClient::responding_with(200, chat_answer("Xin chào"));
+        keyed(&http)
+            .translate(&translation_request("Hello", None, Language::vietnamese()))
+            .expect("Groq translates without a source");
+
+        let body: serde_json::Value =
+            serde_json::from_str(http.requests()[0].body.as_deref().expect("a body"))
+                .expect("the body is JSON");
+        let prompt = body["messages"][0]["content"]
+            .as_str()
+            .expect("a user message");
+        assert!(prompt.contains("into Vietnamese"), "{prompt}");
+        assert!(!prompt.contains("from "), "{prompt}");
+    }
+
+    #[test]
+    fn an_empty_translation_is_a_typed_error() {
+        let http = FakeHttpClient::responding_with(200, chat_answer("   "));
+        let error = keyed(&http)
+            .translate(&translation_request(
+                "Hello",
+                Some(Language::english()),
+                Language::vietnamese(),
+            ))
+            .expect_err("an empty answer is no translation");
+
+        assert!(matches!(
+            error,
+            ProviderError::MalformedResponse {
+                provider: ProviderId::Groq,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_translation_answer_with_no_choices_is_a_typed_error() {
+        let http = FakeHttpClient::responding_with(200, r#"{"choices":[]}"#);
+        let error = keyed(&http)
+            .translate(&translation_request(
+                "Hello",
+                Some(Language::english()),
+                Language::vietnamese(),
+            ))
+            .expect_err("no choice is no translation");
+
+        assert!(matches!(error, ProviderError::MalformedResponse { .. }));
+    }
+
+    #[test]
+    fn a_translation_401_is_the_same_bad_key_as_improve() {
+        let http =
+            FakeHttpClient::responding_with(401, r#"{"error":{"message":"Invalid API Key"}}"#);
+        let error = keyed(&http)
+            .translate(&translation_request(
+                "Hello",
+                Some(Language::english()),
+                Language::vietnamese(),
+            ))
+            .expect_err("a rejected key fails");
+
+        assert_eq!(
+            error,
+            ProviderError::AuthenticationFailed {
+                provider: ProviderId::Groq,
+                cause: AuthFailure::InvalidKey,
+            }
+        );
+    }
+
+    #[test]
+    fn a_translation_429_is_unavailable_and_not_a_session_ban() {
+        let http =
+            FakeHttpClient::responding_with(429, r#"{"error":{"message":"Rate limit reached"}}"#);
+        let error = keyed(&http)
+            .translate(&translation_request(
+                "Hello",
+                Some(Language::english()),
+                Language::vietnamese(),
+            ))
+            .expect_err("a rate limit fails this request");
+
+        assert!(
+            matches!(error, ProviderError::Unavailable { .. }),
+            "a 429 must not end the rung's session: {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_translation_500_is_a_network_failure_naming_groq() {
+        let http = FakeHttpClient::responding_with(500, "oops");
+        let error = keyed(&http)
+            .translate(&translation_request(
+                "Hello",
+                Some(Language::english()),
+                Language::vietnamese(),
+            ))
+            .expect_err("a server error fails");
+
+        assert_eq!(
+            error,
+            ProviderError::Network {
+                provider: ProviderId::Groq,
+                message: "Groq answered HTTP 500".to_owned(),
+            }
+        );
     }
 
     fn content_event(content: &str) -> String {

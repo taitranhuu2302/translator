@@ -52,14 +52,6 @@ impl AzureProvider {
         }
     }
 
-    /// A provider for a global resource (no `Ocp-Apim-Subscription-Region`).
-    pub fn global(
-        http: Arc<dyn HttpClient>,
-        credentials: Arc<dyn CredentialStore>,
-    ) -> Self {
-        Self::new(http, credentials, Arc::new(String::new))
-    }
-
     fn key(&self) -> Result<String, ProviderError> {
         match self.credentials.get(ProviderId::Azure) {
             Ok(Some(key)) if !key.trim().is_empty() => Ok(key),

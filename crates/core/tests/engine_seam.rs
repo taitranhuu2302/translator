@@ -1034,7 +1034,7 @@ fn a_translation_records_the_direction_the_provider_detected() {
 }
 
 #[test]
-fn a_translation_with_no_detected_source_records_no_direction() {
+fn a_translation_with_no_detected_source_records_the_direction_the_pair_resolved() {
     let harness = Harness::new(
         FakeCapture::with_selection("42"),
         FakeProvider::responding_with(ProviderTranslation {
@@ -1047,7 +1047,101 @@ fn a_translation_with_no_detected_source_records_no_direction() {
     harness.engine().quick_translate().expect("quick translate");
 
     let entry = harness.history.entries().pop().expect("one history entry");
-    assert_eq!(entry.direction, None);
+    assert_eq!(
+        entry.direction,
+        Some(Direction {
+            source: Language::vietnamese(),
+            target: Language::english(),
+        }),
+        "the provider detected nothing, so the pair's implicit input language and Target decide"
+    );
+}
+
+#[test]
+fn a_normal_translation_in_each_direction_records_and_reopens_the_direction_it_used() {
+    // The provider detects nothing in either case, so the Language Pair and the
+    // local guess are the only things that can say which way the translation ran.
+    let undetected = |text: &str| {
+        FakeProvider::responding_with(ProviderTranslation {
+            text: text.to_owned(),
+            provider: ProviderId::MyMemory,
+            detected_source: None,
+        })
+    };
+
+    let into_english = Harness::new(FakeCapture::default(), undetected("Hello"));
+    into_english
+        .engine()
+        .translate_text("Xin chào", Mode::Translate)
+        .expect("translate into English");
+
+    let mut into_vietnamese = Harness::new(FakeCapture::default(), undetected("Chào buổi sáng"));
+    into_vietnamese.settings = InMemorySettings::with(Settings {
+        language_pair: LanguagePair::new(Language::vietnamese(), Language::english()),
+        ..Settings::default()
+    });
+    into_vietnamese
+        .engine()
+        .translate_text("Good morning", Mode::Translate)
+        .expect("translate into Vietnamese");
+
+    let english_row = into_english
+        .history
+        .entries()
+        .pop()
+        .expect("one English history entry");
+    let vietnamese_row = into_vietnamese
+        .history
+        .entries()
+        .pop()
+        .expect("one Vietnamese history entry");
+    assert_eq!(
+        english_row.direction,
+        Some(Direction {
+            source: Language::vietnamese(),
+            target: Language::english(),
+        }),
+        "the normal path resolves Vietnamese into English without the provider's help"
+    );
+    assert_eq!(
+        vietnamese_row.direction,
+        Some(Direction {
+            source: Language::english(),
+            target: Language::vietnamese(),
+        }),
+        "the normal path resolves English into Vietnamese without the provider's help"
+    );
+
+    // Reopen each row through a window whose saved pair points the other way:
+    // only the direction recorded with the row can produce the original answer.
+    let mut english_reader = Harness::new(FakeCapture::default(), undetected("unused"));
+    english_reader.settings = InMemorySettings::with(Settings {
+        language_pair: LanguagePair::new(Language::vietnamese(), Language::english()),
+        ..Settings::default()
+    });
+    let reopened_english = english_reader
+        .engine()
+        .reopen(&english_row)
+        .expect("reopen");
+    let vietnamese_reader = Harness::new(FakeCapture::default(), undetected("unused"));
+    let reopened_vietnamese = vietnamese_reader
+        .engine()
+        .reopen(&vietnamese_row)
+        .expect("reopen");
+
+    match (reopened_english, reopened_vietnamese) {
+        (TextOutcome::Translation(english), TextOutcome::Translation(vietnamese)) => {
+            assert_eq!(english.target, Language::english());
+            assert_eq!(english.detected_source, Some(Language::vietnamese()));
+            assert_eq!(vietnamese.target, Language::vietnamese());
+            assert_eq!(
+                vietnamese.detected_source,
+                Some(Language::english()),
+                "a reopened row keeps the direction it was translated in"
+            );
+        }
+        other => panic!("expected two translations, got {other:?}"),
+    }
 }
 
 #[test]

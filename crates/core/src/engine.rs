@@ -47,12 +47,17 @@ impl TranslatorEngine {
     pub fn quick_translate(&self) -> Result<QuickTranslation, EngineError> {
         let settings = self.settings.load()?;
         let selection = self.capture.read_selection()?;
-        let translation = resolve_translation(
+        let (translation, direction) = resolve_translation(
             self.provider.as_ref(),
             &selection.text,
             &settings.language_pair,
         )?;
-        record_translation(self.history.as_ref(), &selection.text, &translation, None);
+        record_translation(
+            self.history.as_ref(),
+            &selection.text,
+            &translation,
+            direction,
+        );
         Ok(QuickTranslation {
             source_text: selection.text,
             translation,
@@ -63,13 +68,18 @@ impl TranslatorEngine {
     pub fn replace_selection(&self) -> Result<Replacement, EngineError> {
         let settings = self.settings.load()?;
         let selection = self.capture.read_selection()?;
-        let translation = resolve_translation(
+        let (translation, direction) = resolve_translation(
             self.provider.as_ref(),
             &selection.text,
             &settings.language_pair,
         )?;
         self.capture.replace_selection(&translation.text)?;
-        record_translation(self.history.as_ref(), &selection.text, &translation, None);
+        record_translation(
+            self.history.as_ref(),
+            &selection.text,
+            &translation,
+            direction,
+        );
         Ok(Replacement {
             source_text: selection.text,
             translation,
@@ -188,18 +198,11 @@ impl TranslatorEngine {
                 let (translation, direction) = match direction {
                     Some(direction) => (
                         translate_in_direction(self.provider.as_ref(), text, direction.clone())?,
-                        Some(direction),
+                        direction,
                     ),
                     None => {
                         let settings = self.settings.load()?;
-                        (
-                            resolve_translation(
-                                self.provider.as_ref(),
-                                text,
-                                &settings.language_pair,
-                            )?,
-                            None,
-                        )
+                        resolve_translation(self.provider.as_ref(), text, &settings.language_pair)?
                     }
                 };
                 record_translation(self.history.as_ref(), text, &translation, direction);
@@ -355,24 +358,16 @@ pub fn history_cutoff(now: Timestamp) -> Timestamp {
     Timestamp(now.0 - HISTORY_RETENTION_SECONDS)
 }
 
-/// The engine resolves direction from the Language Pair and the local guess.
+/// The engine resolves direction from the Language Pair and the local guess, and
+/// answers the direction it actually used so history can keep it.
 fn resolve_translation(
     provider: &dyn TranslationProvider,
     text: &str,
     pair: &LanguagePair,
-) -> Result<Translation, crate::error::ProviderError> {
+) -> Result<(Translation, Direction), crate::error::ProviderError> {
     let direction = pair.direction_for(text);
-    let response = provider.translate(&TranslateRequest {
-        text: text.to_owned(),
-        source: Some(direction.source),
-        target: direction.target.clone(),
-    })?;
-    Ok(Translation {
-        text: response.text,
-        provider: response.provider,
-        detected_source: response.detected_source,
-        target: direction.target,
-    })
+    let translation = translate_in_direction(provider, text, direction.clone())?;
+    Ok((translation, direction))
 }
 
 /// Translate in a direction chosen by the caller (the Translate Window's Swap).
@@ -395,27 +390,22 @@ fn translate_in_direction(
 }
 
 /// Recording history is best-effort: a rejected write is logged, never turned
-/// into a failed translation. The direction is recorded only when it is known —
-/// the provider's detection, or a direction the window chose for itself.
+/// into a failed translation. Every translation records the direction it was
+/// produced in — the pair's resolution for the normal paths, the direction the
+/// window chose for a Swap — so reopening never has to guess.
 fn record_translation(
     history: &dyn HistoryStore,
     source: &str,
     translation: &Translation,
-    known_direction: Option<Direction>,
+    direction: Direction,
 ) {
-    let direction = known_direction.or_else(|| {
-        translation.detected_source.clone().map(|source| Direction {
-            source,
-            target: translation.target.clone(),
-        })
-    });
     let entry = HistoryEntry {
         source: source.to_owned(),
         result: translation.text.clone(),
         provider: translation.provider,
         mode: Mode::Translate,
         created_at: now(),
-        direction,
+        direction: Some(direction),
         corrected: None,
     };
     if let Err(error) = history.record(&entry) {

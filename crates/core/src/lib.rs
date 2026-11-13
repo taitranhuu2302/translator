@@ -34,5 +34,5 @@ pub use ports::{
 };
 pub use providers::{
     AzureProvider, CachedProvider, GroqProvider, ImprovementStream, MyMemoryProvider,
-    ProviderLadder, UnconfiguredProvider,
+    ProviderLadder,
 };
