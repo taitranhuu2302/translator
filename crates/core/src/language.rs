@@ -24,6 +24,12 @@ impl Language {
     }
 }
 
+impl std::fmt::Display for Language {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
 /// One configured Target and the partner implied by it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LanguagePair {
@@ -49,5 +55,83 @@ impl LanguagePair {
 impl Default for LanguagePair {
     fn default() -> Self {
         Self::new(Language::english(), Language::vietnamese())
+    }
+}
+
+/// A lightweight guess at which language some text is written in, for picking a
+/// speech voice. It is not the provider ladder's detection (ticket 06): it reads
+/// Vietnamese letters and tone marks, calls the rest of the Latin alphabet
+/// English, and admits it cannot tell when the text carries no letter it knows.
+pub fn guess_language(text: &str) -> Option<Language> {
+    let mut saw_latin_letter = false;
+    for character in text.chars() {
+        if carries_vietnamese_mark(character) {
+            return Some(Language::vietnamese());
+        }
+        if is_latin_letter(character) {
+            saw_latin_letter = true;
+        }
+    }
+    saw_latin_letter.then(Language::english)
+}
+
+/// The letters and tone marks Vietnamese adds to the Latin alphabet. A tone-marked
+/// vowel is Vietnamese evidence even where another language also uses it; the
+/// heuristic only ever has to choose between Vietnamese and English.
+fn carries_vietnamese_mark(character: char) -> bool {
+    const VIETNAMESE_LETTERS: &str = "ăâđêôơưĂÂĐÊÔƠƯ";
+    const VIETNAMESE_TONES: &str = "àáảãạầấẩẫậằắẳẵặèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ\
+        ÀÁẢÃẠẦẤẨẪẬẰẮẲẴẶÈÉẺẼẸỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌỒỐỔỖỘỜỚỞỠỢÙÚỦŨỤỪỨỬỮỰỲÝỶỸỴ";
+    /// The same tones written as combining marks, which some input methods emit.
+    const COMBINING_TONES: &str = "\u{0300}\u{0301}\u{0303}\u{0309}\u{0323}";
+
+    VIETNAMESE_LETTERS.contains(character)
+        || VIETNAMESE_TONES.contains(character)
+        || COMBINING_TONES.contains(character)
+}
+
+/// Latin letters, including the accented ones, but not the punctuation that
+/// shares their Unicode range.
+fn is_latin_letter(character: char) -> bool {
+    character.is_ascii_alphabetic()
+        || (('\u{00C0}'..='\u{024F}').contains(&character) && character.is_alphabetic())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn english_text_is_english() {
+        assert_eq!(guess_language("Hello, world"), Some(Language::english()));
+        assert_eq!(guess_language("Good morning"), Some(Language::english()));
+    }
+
+    #[test]
+    fn vietnamese_letters_and_tones_are_vietnamese() {
+        assert_eq!(guess_language("Xin chào"), Some(Language::vietnamese()));
+        assert_eq!(guess_language("Tiếng Việt"), Some(Language::vietnamese()));
+        assert_eq!(
+            guess_language("Đây là câu trả lời."),
+            Some(Language::vietnamese())
+        );
+        assert_eq!(guess_language("Hà Nội"), Some(Language::vietnamese()));
+    }
+
+    #[test]
+    fn a_combining_tone_mark_is_vietnamese_evidence() {
+        assert_eq!(guess_language("cha\u{0300}o"), Some(Language::vietnamese()));
+    }
+
+    #[test]
+    fn text_without_a_letter_has_no_guess() {
+        assert_eq!(guess_language(""), None);
+        assert_eq!(guess_language("42 — 3.14 !?"), None);
+        assert_eq!(guess_language("   "), None);
+    }
+
+    #[test]
+    fn digits_and_punctuation_do_not_hide_the_latin_letters_beside_them() {
+        assert_eq!(guess_language("42 apples"), Some(Language::english()));
     }
 }

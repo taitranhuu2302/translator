@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{CaptureError, EngineError};
-use crate::language::LanguagePair;
+use crate::language::{guess_language, Language, LanguagePair};
 use crate::model::{
     HistoryEntry, Mode, ProviderId, ProviderStatus, QuickTranslation, ReadAloud, Replacement,
     Selection, Settings, TextOutcome, Timestamp, Translation,
@@ -103,10 +103,27 @@ impl TranslatorEngine {
         Ok(self.capture.open_accessibility_settings()?)
     }
 
-    /// Read Aloud: speak the Selection, never the translation.
+    /// Read Aloud: speak the Selection, never the translation, and never call a
+    /// provider. With nothing selected there is nothing to hear, so it succeeds
+    /// with empty spoken text rather than looking like the app broke; a missing
+    /// permission or secure input stays a typed error.
     pub fn read_aloud(&self) -> Result<ReadAloud, EngineError> {
-        let selection = self.capture.read_selection()?;
-        self.speech.speak(&selection.text)?;
+        let selection = match self.capture.read_selection() {
+            Ok(selection) => selection,
+            Err(CaptureError::NothingSelected) => {
+                return Ok(ReadAloud {
+                    spoken_text: String::new(),
+                })
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if selection.text.trim().is_empty() {
+            return Ok(ReadAloud {
+                spoken_text: String::new(),
+            });
+        }
+        let language = guess_language(&selection.text).unwrap_or_else(Language::english);
+        self.speech.speak(&selection.text, &language)?;
         Ok(ReadAloud {
             spoken_text: selection.text,
         })

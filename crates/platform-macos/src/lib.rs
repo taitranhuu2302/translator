@@ -11,12 +11,17 @@ mod capture;
 #[path = "capture_unsupported.rs"]
 mod capture;
 mod settings_file;
+#[cfg(target_os = "macos")]
+mod speech;
+#[cfg(not(target_os = "macos"))]
+#[path = "speech_unsupported.rs"]
+mod speech;
 
 pub use settings_file::MacSettingsStore;
 
 use translator_core::{
     CaptureError, CredentialError, CredentialStore, HistoryEntry, HistoryError, HistoryStore,
-    ProviderId, Selection, SelectionCapture, SpeechError, SpeechOutput, Timestamp,
+    Language, ProviderId, Selection, SelectionCapture, SpeechError, SpeechOutput, Timestamp,
 };
 
 /// Accessibility first, clipboard fallback, secure input refused outright
@@ -47,14 +52,14 @@ impl SelectionCapture for MacSelectionCapture {
     }
 }
 
-/// The system voice. REPLACED IN: ticket 03.
+/// The system voice: AVFoundation's speech synthesizer, asynchronously, in the
+/// voice for the language the engine resolved. It stops the previous utterance
+/// when a new one starts.
 pub struct MacSpeechOutput;
 
 impl SpeechOutput for MacSpeechOutput {
-    fn speak(&self, _text: &str) -> Result<(), SpeechError> {
-        Err(SpeechError::Unavailable {
-            reason: "speech synthesis lands in ticket 03".to_owned(),
-        })
+    fn speak(&self, text: &str, language: &Language) -> Result<(), SpeechError> {
+        speech::speak(text, language)
     }
 }
 

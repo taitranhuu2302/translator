@@ -18,3 +18,4 @@ tauri-plugin-global-shortcut = "2"
 serde = { workspace = true }
 translator-core = { workspace = true }
 translator-platform-macos = { workspace = true }
+tauri-plugin-dialog = "2"

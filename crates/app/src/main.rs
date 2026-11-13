@@ -7,17 +7,56 @@ use std::sync::{Arc, Mutex};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use translator_core::{
     EngineError, HistoryEntry, Mode, ProviderStatus, QuickTranslation, ReadAloud, Replacement,
-    Selection, Settings, TextOutcome, TranslatorEngine, UnconfiguredProvider,
+    Selection, Settings, SpeechError, TextOutcome, TranslatorEngine, UnconfiguredProvider,
 };
 use translator_platform_macos::{
     MacCredentialStore, MacHistoryStore, MacSelectionCapture, MacSettingsStore, MacSpeechOutput,
 };
 
-/// Used when the settings file cannot be read, so the window can still be opened.
+/// Used when the settings file cannot be read, so the shortcuts still work.
 const DEFAULT_TRANSLATE_SHORTCUT: &str = "Ctrl+Alt+E";
+const DEFAULT_READ_ALOUD_SHORTCUT: &str = "Ctrl+Alt+S";
+
+/// What a registered shortcut does. The one global handler routes on the
+/// shortcut's identity because one plugin owns every binding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Route {
+    TranslateWindow,
+    ReadAloud,
+}
+
+/// The shortcuts that registered successfully. A binding that could not be
+/// registered is absent, so pressing it does nothing instead of triggering the
+/// wrong action.
+#[derive(Clone, Copy, Default)]
+struct ShortcutRoutes {
+    translate_window: Option<Shortcut>,
+    read_aloud: Option<Shortcut>,
+}
+
+impl ShortcutRoutes {
+    fn route(&self, shortcut: &Shortcut) -> Option<Route> {
+        if is_the_same_binding(self.read_aloud, shortcut) {
+            Some(Route::ReadAloud)
+        } else if is_the_same_binding(self.translate_window, shortcut) {
+            Some(Route::TranslateWindow)
+        } else {
+            None
+        }
+    }
+}
+
+/// Compare the key combination, not the plugin's registration id: the id is a
+/// per-process handle, so two bindings parsed from the same string differ in it.
+fn is_the_same_binding(registered: Option<Shortcut>, shortcut: &Shortcut) -> bool {
+    registered.is_some_and(|registered| {
+        registered.mods == shortcut.mods && registered.key == shortcut.key
+    })
+}
 
 struct AppState {
     engine: TranslatorEngine,
@@ -25,6 +64,7 @@ struct AppState {
     /// take it. Capture happens before the window is shown, while the app the
     /// user was typing in still has focus.
     prefill: Mutex<Option<Prefill>>,
+    routes: Mutex<ShortcutRoutes>,
 }
 
 impl AppState {
@@ -34,6 +74,13 @@ impl AppState {
 
     fn take_prefill(&self) -> Option<Prefill> {
         self.prefill.lock().expect("prefill lock").take()
+    }
+
+    fn route(&self, shortcut: &Shortcut) -> Option<Route> {
+        self.routes
+            .lock()
+            .expect("shortcut routes lock")
+            .route(shortcut)
     }
 }
 
@@ -147,6 +194,54 @@ fn open_translate_window(app: &AppHandle) {
     });
 }
 
+/// Read Aloud: capture and speak off the main thread, so a slow capture or a long
+/// utterance never delays the next shortcut. Nothing is shown when nothing was
+/// selected — the shortcut simply stays quiet — but a typed failure gets a dialog,
+/// because speech that failed silently would look like the shortcut never fired.
+fn read_aloud_selection(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || match app.state::<AppState>().engine.read_aloud() {
+        Ok(outcome) if outcome.spoken_text.is_empty() => {}
+        Ok(_) => {}
+        Err(error) => show_read_aloud_failure(&app, &error),
+    });
+}
+
+fn show_read_aloud_failure(app: &AppHandle, error: &EngineError) {
+    eprintln!("Translator: Read Aloud failed: {error}");
+    let message = match error {
+        EngineError::Speech(SpeechError::NoVoice { language }) => format!(
+            "No voice is installed for {language}. Add one in System Settings → \
+             Accessibility → Spoken Content → System Voice → Manage Voices."
+        ),
+        other => other.to_string(),
+    };
+    app.dialog()
+        .message(message)
+        .title("Read Aloud")
+        .kind(MessageDialogKind::Error)
+        .show(|_| {});
+}
+
+/// Register one binding and answer the shortcut that is now live, or `None` when
+/// the binding is invalid or another app owns it. A conflict is reported rather
+/// than silently dropped (ticket 10 surfaces it in the settings UI).
+fn register_shortcut(app: &AppHandle, binding: &str) -> Option<Shortcut> {
+    match binding.parse::<Shortcut>() {
+        Ok(shortcut) => match app.global_shortcut().register(shortcut) {
+            Ok(()) => Some(shortcut),
+            Err(error) => {
+                eprintln!("Translator: could not register {binding}: {error}");
+                None
+            }
+        },
+        Err(error) => {
+            eprintln!("Translator: invalid shortcut binding {binding}: {error}");
+            None
+        }
+    }
+}
+
 fn build_tray(app: &AppHandle, accelerator: &str) -> tauri::Result<()> {
     let open = MenuItem::with_id(
         app,
@@ -192,11 +287,17 @@ fn main() {
     );
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        open_translate_window(app);
+                .with_handler(|app, shortcut, event| {
+                    if event.state != ShortcutState::Pressed {
+                        return;
+                    }
+                    match app.state::<AppState>().route(shortcut) {
+                        Some(Route::TranslateWindow) => open_translate_window(app),
+                        Some(Route::ReadAloud) => read_aloud_selection(app),
+                        None => {}
                     }
                 })
                 .build(),
@@ -204,6 +305,7 @@ fn main() {
         .manage(AppState {
             engine,
             prefill: Mutex::new(None),
+            routes: Mutex::new(ShortcutRoutes::default()),
         })
         .invoke_handler(tauri::generate_handler![
             quick_translate,
@@ -225,21 +327,25 @@ fn main() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let settings = app.state::<AppState>().engine.settings();
-            let binding = settings
+            let translate_binding = settings
                 .as_ref()
                 .map(|settings| settings.shortcuts.translate_window.clone())
                 .unwrap_or_else(|_| DEFAULT_TRANSLATE_SHORTCUT.to_owned());
+            let read_aloud_binding = settings
+                .as_ref()
+                .map(|settings| settings.shortcuts.read_aloud.clone())
+                .unwrap_or_else(|_| DEFAULT_READ_ALOUD_SHORTCUT.to_owned());
 
-            build_tray(app.handle(), &binding)?;
+            build_tray(app.handle(), &translate_binding)?;
 
-            match binding.parse::<tauri_plugin_global_shortcut::Shortcut>() {
-                Ok(shortcut) => {
-                    if let Err(error) = app.global_shortcut().register(shortcut) {
-                        eprintln!("Translator: could not register {binding}: {error}");
-                    }
-                }
-                Err(error) => eprintln!("Translator: invalid shortcut binding {binding}: {error}"),
-            }
+            let routes = ShortcutRoutes {
+                translate_window: register_shortcut(app.handle(), &translate_binding),
+                read_aloud: register_shortcut(app.handle(), &read_aloud_binding),
+            };
+            *app.state::<AppState>()
+                .routes
+                .lock()
+                .expect("shortcut routes lock") = routes;
 
             // The onboarding is the first thing the app has to say, so the first
             // launch opens the Translate Window to say it.
@@ -256,4 +362,41 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Translator");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shortcut(binding: &str) -> Shortcut {
+        binding.parse().expect("a valid shortcut binding")
+    }
+
+    #[test]
+    fn each_registered_shortcut_routes_to_its_own_action() {
+        let routes = ShortcutRoutes {
+            translate_window: Some(shortcut("Ctrl+Alt+E")),
+            read_aloud: Some(shortcut("Ctrl+Alt+S")),
+        };
+
+        assert_eq!(
+            routes.route(&shortcut("Ctrl+Alt+E")),
+            Some(Route::TranslateWindow)
+        );
+        assert_eq!(
+            routes.route(&shortcut("Ctrl+Alt+S")),
+            Some(Route::ReadAloud)
+        );
+    }
+
+    #[test]
+    fn a_shortcut_that_did_not_register_routes_nowhere() {
+        let routes = ShortcutRoutes {
+            translate_window: Some(shortcut("Ctrl+Alt+E")),
+            read_aloud: None,
+        };
+
+        assert_eq!(routes.route(&shortcut("Ctrl+Alt+S")), None);
+        assert_eq!(routes.route(&shortcut("Ctrl+Alt+D")), None);
+    }
 }

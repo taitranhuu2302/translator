@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::language::Language;
 use crate::model::ProviderId;
 
 /// Why reading or writing the Selection failed. Every capture path reports one of
@@ -48,6 +49,10 @@ pub enum ProviderError {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[serde(rename_all = "snake_case")]
 pub enum SpeechError {
+    /// The system has no voice installed for the language the text is in, so
+    /// Read Aloud fails visibly instead of speaking in the wrong voice.
+    #[error("no voice is installed for {language}")]
+    NoVoice { language: Language },
     #[error("speech synthesis is unavailable: {reason}")]
     Unavailable { reason: String },
 }

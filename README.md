@@ -2,7 +2,7 @@
 
 A macOS menu-bar app for translating text you have selected in any app — without leaving the app you are typing in.
 
-**Status: in progress.** The Rust workspace, the signed bundle and the engine seam exist (ticket 01), and the app now reads the Selection and opens the Translate Window with it (ticket 02). Reading Aloud, Quick Translate, Replace, providers, Improve and History are still stubs behind the same engine seam. The riskiest assumption is proven separately: a Tauri window becomes a non-activating `NSPanel` that receives keys while the app behind it keeps focus (`spike/panel`).
+**Status: in progress.** The Rust workspace, the signed bundle and the engine seam exist (ticket 01), the app reads the Selection and opens the Translate Window with it (ticket 02), and `⌃⌥S` now reads the Selection aloud in the system voice (ticket 03). Quick Translate, Replace, providers, Improve and History are still stubs behind the same engine seam. The riskiest assumption is proven separately: a Tauri window becomes a non-activating `NSPanel` that receives keys while the app behind it keeps focus (`spike/panel`).
 
 ## Shortcuts
 

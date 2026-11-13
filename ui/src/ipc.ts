@@ -109,7 +109,9 @@ export type ProviderError =
   | { malformed_response: { provider: ProviderId; message: string } }
   | { unavailable: { reason: string } };
 
-export type SpeechError = { unavailable: { reason: string } };
+export type SpeechError =
+  | { no_voice: { language: Language } }
+  | { unavailable: { reason: string } };
 
 export type HistoryError =
   | { unavailable: { reason: string } }

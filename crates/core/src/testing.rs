@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use crate::error::{
     CaptureError, CredentialError, HistoryError, ProviderError, SettingsError, SpeechError,
 };
+use crate::language::Language;
 use crate::model::{
     HistoryEntry, Improvement, ProviderId, ProviderTranslation, Selection, Settings, Timestamp,
 };
@@ -217,21 +218,49 @@ impl TranslationProvider for FakeProvider {
     }
 }
 
-/// A speech port that records everything it was asked to say.
+/// One thing the fake speech port was asked to say, and the language the engine
+/// asked for it to be said in.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpokenUtterance {
+    pub text: String,
+    pub language: Language,
+}
+
+/// A speech port that records everything it was asked to say, or fails every
+/// request with a scripted error.
 #[derive(Clone, Default)]
 pub struct RecordingSpeech {
-    spoken: Arc<Mutex<Vec<String>>>,
+    state: Arc<Mutex<SpeechState>>,
+}
+
+#[derive(Default)]
+struct SpeechState {
+    spoken: Vec<SpokenUtterance>,
+    error: Option<SpeechError>,
 }
 
 impl RecordingSpeech {
-    pub fn spoken(&self) -> Vec<String> {
-        self.spoken.lock().unwrap().clone()
+    pub fn failing_with(error: SpeechError) -> Self {
+        let fake = Self::default();
+        fake.state.lock().unwrap().error = Some(error);
+        fake
+    }
+
+    pub fn spoken(&self) -> Vec<SpokenUtterance> {
+        self.state.lock().unwrap().spoken.clone()
     }
 }
 
 impl SpeechOutput for RecordingSpeech {
-    fn speak(&self, text: &str) -> Result<(), SpeechError> {
-        self.spoken.lock().unwrap().push(text.to_owned());
+    fn speak(&self, text: &str, language: &Language) -> Result<(), SpeechError> {
+        let mut state = self.state.lock().unwrap();
+        if let Some(error) = &state.error {
+            return Err(error.clone());
+        }
+        state.spoken.push(SpokenUtterance {
+            text: text.to_owned(),
+            language: language.clone(),
+        });
         Ok(())
     }
 }

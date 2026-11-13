@@ -50,7 +50,10 @@ pub trait TranslationProvider: Send + Sync {
 
 /// Speaks the Selection with the system voice. It never speaks a translation.
 pub trait SpeechOutput: Send + Sync {
-    fn speak(&self, text: &str) -> Result<(), SpeechError>;
+    /// Speaks `text` in `language`: the voice depends on the language, so the
+    /// engine resolves it and the port does not guess. A platform with no voice
+    /// for that language answers `SpeechError::NoVoice`.
+    fn speak(&self, text: &str, language: &Language) -> Result<(), SpeechError>;
 }
 
 /// One row per translation, with the 30-day purge.

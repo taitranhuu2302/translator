@@ -17,7 +17,7 @@ pub use error::{
     CaptureError, CredentialError, EngineError, HistoryError, ProviderError, SettingsError,
     SpeechError,
 };
-pub use language::{Language, LanguagePair};
+pub use language::{guess_language, Language, LanguagePair};
 pub use model::{
     HistoryEntry, Improvement, Mode, ProviderId, ProviderStatus, ProviderTranslation,
     QuickTranslation, ReadAloud, Replacement, Selection, Settings, ShortcutBindings, TextOutcome,

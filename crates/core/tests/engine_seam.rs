@@ -6,10 +6,12 @@ use std::sync::Arc;
 
 use translator_core::testing::{
     FakeCapture, FakeCredentials, FakeProvider, InMemoryHistory, InMemorySettings, RecordingSpeech,
+    SpokenUtterance,
 };
 use translator_core::{
     CaptureError, EngineError, Improvement, Language, LanguagePair, Mode, ProviderId,
-    ProviderTranslation, Selection, Settings, TextOutcome, TranslateRequest, TranslatorEngine,
+    ProviderTranslation, Selection, Settings, SpeechError, TextOutcome, TranslateRequest,
+    TranslatorEngine,
 };
 
 struct Harness {
@@ -34,6 +36,11 @@ impl Harness {
             }),
             credentials: FakeCredentials::default(),
         }
+    }
+
+    fn with_speech(mut self, speech: RecordingSpeech) -> Self {
+        self.speech = speech;
+        self
     }
 
     fn engine(&self) -> TranslatorEngine {
@@ -104,8 +111,105 @@ fn read_aloud_speaks_the_selection_and_never_the_translation() {
     let outcome = harness.engine().read_aloud().expect("read aloud");
 
     assert_eq!(outcome.spoken_text, "Xin chào");
-    assert_eq!(harness.speech.spoken(), vec!["Xin chào".to_owned()]);
+    assert_eq!(
+        harness.speech.spoken(),
+        vec![SpokenUtterance {
+            text: "Xin chào".to_owned(),
+            language: Language::vietnamese(),
+        }]
+    );
     assert!(harness.provider.requests().is_empty());
+}
+
+#[test]
+fn read_aloud_picks_the_voice_from_the_language_the_selection_is_written_in() {
+    let vietnamese = Harness::new(
+        FakeCapture::with_selection("Tiếng Việt"),
+        provider_saying("English"),
+    );
+    let english = Harness::new(
+        FakeCapture::with_selection("Good morning"),
+        provider_saying("Chào buổi sáng"),
+    );
+
+    vietnamese.engine().read_aloud().expect("read vietnamese");
+    english.engine().read_aloud().expect("read english");
+
+    assert_eq!(
+        vietnamese.speech.spoken()[0].language,
+        Language::vietnamese()
+    );
+    assert_eq!(english.speech.spoken()[0].language, Language::english());
+}
+
+#[test]
+fn read_aloud_falls_back_to_english_when_there_is_no_letter_to_judge_by() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("42 — 3.14"),
+        provider_saying("Hello"),
+    );
+
+    harness.engine().read_aloud().expect("read aloud");
+
+    assert_eq!(harness.speech.spoken()[0].language, Language::english());
+}
+
+#[test]
+fn read_aloud_with_nothing_selected_succeeds_without_speaking() {
+    let harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+
+    let outcome = harness.engine().read_aloud().expect("nothing selected");
+
+    assert_eq!(outcome.spoken_text, "");
+    assert!(harness.speech.spoken().is_empty());
+    assert!(harness.provider.requests().is_empty());
+}
+
+#[test]
+fn read_aloud_reports_a_missing_accessibility_grant_instead_of_reading() {
+    let harness = Harness::new(
+        FakeCapture::failing_reads_with(CaptureError::NoAccessibility),
+        provider_saying("Hello"),
+    );
+
+    let error = harness.engine().read_aloud().unwrap_err();
+
+    assert_eq!(error, EngineError::Capture(CaptureError::NoAccessibility));
+    assert!(harness.speech.spoken().is_empty());
+    assert!(harness.provider.requests().is_empty());
+}
+
+#[test]
+fn secure_input_stops_read_aloud_before_anything_is_spoken() {
+    let harness = Harness::new(
+        FakeCapture::failing_reads_with(CaptureError::SecureInput),
+        provider_saying("Hello"),
+    );
+
+    let error = harness.engine().read_aloud().unwrap_err();
+
+    assert_eq!(error, EngineError::Capture(CaptureError::SecureInput));
+    assert!(harness.speech.spoken().is_empty());
+}
+
+#[test]
+fn a_missing_voice_is_a_typed_speech_failure_that_names_the_language() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    )
+    .with_speech(RecordingSpeech::failing_with(SpeechError::NoVoice {
+        language: Language::vietnamese(),
+    }));
+
+    let error = harness.engine().read_aloud().unwrap_err();
+
+    assert_eq!(
+        error,
+        EngineError::Speech(SpeechError::NoVoice {
+            language: Language::vietnamese(),
+        })
+    );
 }
 
 #[test]
