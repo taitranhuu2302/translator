@@ -7,4 +7,8 @@ description = "Translator product logic and port traits, with no platform depend
 
 [dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = "2"
+# A blocking client is all the engine needs, and rustls keeps the TLS stack
+# self-contained so `core` builds anywhere. See `src/http.rs` for the choice.
+ureq = { version = "2.12", default-features = false, features = ["tls", "gzip"] }

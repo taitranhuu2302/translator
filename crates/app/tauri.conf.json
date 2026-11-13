@@ -16,6 +16,19 @@
         "width": 720,
         "height": 480,
         "visible": false
+      },
+      {
+        "label": "popup",
+        "title": "Quick Translate",
+        "url": "popup.html",
+        "width": 420,
+        "height": 220,
+        "visible": false,
+        "focus": false,
+        "decorations": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
       }
     ],
     "security": {

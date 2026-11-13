@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::error::CaptureError;
 use crate::language::{Language, LanguagePair};
 
 /// The text the user highlighted in another app (or in our own window) when a
@@ -112,6 +113,18 @@ impl Default for ShortcutBindings {
 pub struct ProviderStatus {
     pub azure_configured: bool,
     pub groq_configured: bool,
+}
+
+/// What the Quick Translate popup starts with, captured before the panel is
+/// shown while the source app still has focus. "Nothing selected" is its own
+/// case so the popup can say "select something first" instead of showing an
+/// empty translating state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PopupPrefill {
+    Selection(Selection),
+    NothingSelected,
+    Failure(CaptureError),
 }
 
 /// The outcome of Quick Translate: what was selected and what it became.

@@ -46,6 +46,19 @@ pub enum ProviderError {
     Unavailable { reason: String },
 }
 
+/// Why an HTTP request failed before the caller could read a status.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[serde(rename_all = "snake_case")]
+pub enum HttpError {
+    /// The request never reached a server: DNS, connect, timeout or TLS. This is
+    /// the "there is no network" case, which the popup reports specifically.
+    #[error("the network could not be reached: {message}")]
+    Unreachable { message: String },
+    /// The request was made but failed before a response could be read.
+    #[error("the request failed: {message}")]
+    Request { message: String },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[serde(rename_all = "snake_case")]
 pub enum SpeechError {

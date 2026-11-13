@@ -4,27 +4,33 @@
 //! is the cross-platform promise the v1 spec makes, and it is tested with `cargo test`
 //! without launching the app.
 
+pub mod chunking;
 pub mod engine;
 pub mod error;
+pub mod http;
 pub mod language;
 pub mod model;
 pub mod ports;
 pub mod providers;
 pub mod testing;
 
+pub use chunking::{chunk_text, join_chunks, MAX_CHUNK_CHARS};
 pub use engine::TranslatorEngine;
 pub use error::{
-    CaptureError, CredentialError, EngineError, HistoryError, ProviderError, SettingsError,
-    SpeechError,
+    CaptureError, CredentialError, EngineError, HistoryError, HttpError, ProviderError,
+    SettingsError, SpeechError,
 };
-pub use language::{guess_language, Language, LanguagePair};
+pub use http::UreqHttpClient;
+pub use language::{guess_language, Direction, Language, LanguagePair};
 pub use model::{
-    HistoryEntry, Improvement, Mode, ProviderId, ProviderStatus, ProviderTranslation,
+    HistoryEntry, Improvement, Mode, PopupPrefill, ProviderId, ProviderStatus, ProviderTranslation,
     QuickTranslation, ReadAloud, Replacement, Selection, Settings, ShortcutBindings, TextOutcome,
     Timestamp, Translation,
 };
 pub use ports::{
-    CredentialStore, HistoryStore, ImproveRequest, SelectionCapture, SettingsStore, SpeechOutput,
-    TranslateRequest, TranslationProvider,
+    CredentialStore, HistoryStore, HttpClient, HttpMethod, HttpRequest, HttpResponse, ImproveRequest,
+    SelectionCapture, SettingsStore, SpeechOutput, TranslateRequest, TranslationProvider,
 };
-pub use providers::UnconfiguredProvider;
+pub use providers::{
+    CachedProvider, MyMemoryProvider, ProviderLadder, UnconfiguredProvider,
+};

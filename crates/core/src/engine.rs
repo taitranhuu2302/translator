@@ -4,8 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::error::{CaptureError, EngineError};
 use crate::language::{guess_language, Language, LanguagePair};
 use crate::model::{
-    HistoryEntry, Mode, ProviderId, ProviderStatus, QuickTranslation, ReadAloud, Replacement,
-    Selection, Settings, TextOutcome, Timestamp, Translation,
+    HistoryEntry, Mode, PopupPrefill, ProviderId, ProviderStatus, QuickTranslation, ReadAloud,
+    Replacement, Selection, Settings, TextOutcome, Timestamp, Translation,
 };
 use crate::ports::{
     CredentialStore, HistoryStore, ImproveRequest, SelectionCapture, SettingsStore, SpeechOutput,
@@ -51,7 +51,7 @@ impl TranslatorEngine {
             &selection.text,
             &settings.language_pair,
         )?;
-        record_translation(self.history.as_ref(), &selection.text, &translation)?;
+        record_translation(self.history.as_ref(), &selection.text, &translation);
         Ok(QuickTranslation {
             source_text: selection.text,
             translation,
@@ -68,7 +68,7 @@ impl TranslatorEngine {
             &settings.language_pair,
         )?;
         self.capture.replace_selection(&translation.text)?;
-        record_translation(self.history.as_ref(), &selection.text, &translation)?;
+        record_translation(self.history.as_ref(), &selection.text, &translation);
         Ok(Replacement {
             source_text: selection.text,
             translation,
@@ -83,6 +83,20 @@ impl TranslatorEngine {
             Ok(selection) => Ok(selection),
             Err(CaptureError::NothingSelected) => Ok(Selection::new("")),
             Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Quick Translate's opening state. It is captured on a worker thread before
+    /// the panel is shown, while the app the user is working in still has focus,
+    /// and carried into the panel as one typed value. An empty Selection is
+    /// "nothing selected", not an empty translating state, and a refused read is
+    /// a typed failure the panel can explain.
+    pub fn popup_prefill(&self) -> PopupPrefill {
+        match self.capture.read_selection() {
+            Ok(selection) if selection.text.trim().is_empty() => PopupPrefill::NothingSelected,
+            Ok(selection) => PopupPrefill::Selection(selection),
+            Err(CaptureError::NothingSelected) => PopupPrefill::NothingSelected,
+            Err(error) => PopupPrefill::Failure(error),
         }
     }
 
@@ -140,7 +154,7 @@ impl TranslatorEngine {
                     text,
                     &settings.language_pair,
                 )?;
-                record_translation(self.history.as_ref(), text, &translation)?;
+                record_translation(self.history.as_ref(), text, &translation);
                 Ok(TextOutcome::Translation(translation))
             }
             Mode::Improve => Ok(TextOutcome::Improvement(improve_with(
@@ -183,39 +197,39 @@ impl TranslatorEngine {
     }
 }
 
-/// The engine resolves direction from the Language Pair. Detection-driven
-/// direction arrives with the provider ladder (ticket 06).
+/// The engine resolves direction from the Language Pair and the local guess.
 fn resolve_translation(
     provider: &dyn TranslationProvider,
     text: &str,
     pair: &LanguagePair,
 ) -> Result<Translation, crate::error::ProviderError> {
-    let target = pair.destination_for(None);
+    let direction = pair.direction_for(text);
     let response = provider.translate(&TranslateRequest {
         text: text.to_owned(),
-        source: None,
-        target: target.clone(),
+        source: Some(direction.source),
+        target: direction.target.clone(),
     })?;
     Ok(Translation {
         text: response.text,
         provider: response.provider,
         detected_source: response.detected_source,
-        target,
+        target: direction.target,
     })
 }
 
-fn record_translation(
-    history: &dyn HistoryStore,
-    source: &str,
-    translation: &Translation,
-) -> Result<(), crate::error::HistoryError> {
-    history.record(&HistoryEntry {
+/// Recording history is best-effort until ticket 09 makes the real store work: a
+/// rejected write is logged, never turned into a failed translation.
+fn record_translation(history: &dyn HistoryStore, source: &str, translation: &Translation) {
+    let entry = HistoryEntry {
         source: source.to_owned(),
         result: translation.text.clone(),
         provider: translation.provider,
         mode: Mode::Translate,
         created_at: now(),
-    })
+    };
+    if let Err(error) = history.record(&entry) {
+        eprintln!("Translator: the translation was not recorded in history: {error}");
+    }
 }
 
 fn now() -> Timestamp {

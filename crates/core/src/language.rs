@@ -58,6 +58,43 @@ impl Default for LanguagePair {
     }
 }
 
+/// The two languages one piece of text is translated between. `source` is never
+/// `target`: a provider rejects `en|en`, so a degenerate pair falls back to the
+/// other language of the v1 pair instead of asking for a language into itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Direction {
+    pub source: Language,
+    pub target: Language,
+}
+
+impl LanguagePair {
+    /// Resolve the direction for `text`. Text already in the Target goes to the
+    /// partner; anything else goes to the Target. The source is the local guess
+    /// when there is one, otherwise the pair's implicit input language, so every
+    /// request carries a complete language pair.
+    pub fn direction_for(&self, text: &str) -> Direction {
+        let detected = guess_language(text);
+        let source = detected
+            .clone()
+            .unwrap_or_else(|| self.partner.clone());
+        let mut target = self.destination_for(detected.as_ref());
+        if target == source {
+            target = other_of_the_v1_pair(&source);
+        }
+        Direction { source, target }
+    }
+}
+
+/// The guard's escape hatch. v1 only ever resolves English and Vietnamese, so a
+/// pair that names the same language twice still has a sensible other side.
+fn other_of_the_v1_pair(language: &Language) -> Language {
+    if *language == Language::english() {
+        Language::vietnamese()
+    } else {
+        Language::english()
+    }
+}
+
 /// A lightweight guess at which language some text is written in, for picking a
 /// speech voice. It is not the provider ladder's detection (ticket 06): it reads
 /// Vietnamese letters and tone marks, calls the rest of the Latin alphabet

@@ -10,6 +10,8 @@ mod capture;
 #[cfg(not(target_os = "macos"))]
 #[path = "capture_unsupported.rs"]
 mod capture;
+pub mod clipboard;
+pub mod pointer;
 mod settings_file;
 #[cfg(target_os = "macos")]
 mod speech;

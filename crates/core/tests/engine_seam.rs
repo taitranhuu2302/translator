@@ -9,9 +9,9 @@ use translator_core::testing::{
     SpokenUtterance,
 };
 use translator_core::{
-    CaptureError, EngineError, Improvement, Language, LanguagePair, Mode, ProviderId,
-    ProviderTranslation, Selection, Settings, SpeechError, TextOutcome, TranslateRequest,
-    TranslatorEngine,
+    CachedProvider, CaptureError, EngineError, Improvement, Language, LanguagePair, Mode,
+    PopupPrefill, ProviderId, ProviderTranslation, Selection, Settings, SpeechError, TextOutcome,
+    TranslateRequest, TranslatorEngine,
 };
 
 struct Harness {
@@ -77,7 +77,7 @@ fn quick_translate_sends_the_selection_to_the_provider_and_records_it_in_history
         harness.provider.requests(),
         vec![TranslateRequest {
             text: "Xin chào".to_owned(),
-            source: None,
+            source: Some(Language::vietnamese()),
             target: Language::english(),
         }]
     );
@@ -88,6 +88,109 @@ fn quick_translate_sends_the_selection_to_the_provider_and_records_it_in_history
     assert_eq!(recorded[0].result, "Hello");
     assert_eq!(recorded[0].provider, ProviderId::MyMemory);
     assert_eq!(recorded[0].mode, Mode::Translate);
+}
+
+#[test]
+fn a_vietnamese_selection_is_translated_into_the_english_target() {
+    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+
+    let outcome = harness.engine().quick_translate().expect("quick translate");
+
+    assert_eq!(outcome.translation.target, Language::english());
+    assert_eq!(
+        harness.provider.requests(),
+        vec![TranslateRequest {
+            text: "Xin chào".to_owned(),
+            source: Some(Language::vietnamese()),
+            target: Language::english(),
+        }]
+    );
+}
+
+#[test]
+fn an_english_selection_is_translated_into_the_partner_when_english_is_the_target() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("Good morning"),
+        provider_saying("Chào buổi sáng"),
+    );
+
+    let outcome = harness.engine().quick_translate().expect("quick translate");
+
+    assert_eq!(outcome.translation.target, Language::vietnamese());
+    assert_eq!(
+        harness.provider.requests(),
+        vec![TranslateRequest {
+            text: "Good morning".to_owned(),
+            source: Some(Language::english()),
+            target: Language::vietnamese(),
+        }]
+    );
+}
+
+#[test]
+fn with_vietnamese_as_the_target_an_english_selection_goes_to_vietnamese() {
+    let mut harness = Harness::new(
+        FakeCapture::with_selection("Good morning"),
+        provider_saying("Chào buổi sáng"),
+    );
+    harness.settings = InMemorySettings::with(Settings {
+        language_pair: LanguagePair::new(Language::vietnamese(), Language::english()),
+        ..Settings::default()
+    });
+
+    let outcome = harness.engine().quick_translate().expect("quick translate");
+
+    assert_eq!(outcome.translation.target, Language::vietnamese());
+    assert_eq!(
+        harness.provider.requests(),
+        vec![TranslateRequest {
+            text: "Good morning".to_owned(),
+            source: Some(Language::english()),
+            target: Language::vietnamese(),
+        }]
+    );
+}
+
+#[test]
+fn direction_never_asks_a_provider_to_translate_a_language_into_itself() {
+    // A pair that names the same language twice has no partner to send the text
+    // to, so the guard falls back to the other language of the v1 pair instead of
+    // sending `en|en`, which the provider rejects.
+    let mut harness = Harness::new(
+        FakeCapture::with_selection("Good morning"),
+        provider_saying("Chào buổi sáng"),
+    );
+    harness.settings = InMemorySettings::with(Settings {
+        language_pair: LanguagePair::new(Language::english(), Language::english()),
+        ..Settings::default()
+    });
+
+    harness.engine().quick_translate().expect("quick translate");
+
+    let request = &harness.provider.requests()[0];
+    assert_ne!(request.source, Some(request.target.clone()));
+}
+
+#[test]
+fn a_rejected_history_write_never_fails_the_translation() {
+    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+    let engine = TranslatorEngine::new(
+        Arc::new(harness.capture.clone()),
+        Arc::new(harness.provider.clone()),
+        Arc::new(harness.speech.clone()),
+        Arc::new(InMemoryHistory::failing_writes_with(
+            translator_core::HistoryError::Unavailable {
+                reason: "history storage lands in ticket 09".to_owned(),
+            },
+        )),
+        Arc::new(harness.settings.clone()),
+        Arc::new(harness.credentials.clone()),
+    );
+
+    let outcome = engine.quick_translate().expect("history is best-effort");
+
+    assert_eq!(outcome.translation.text, "Hello");
+    assert_eq!(harness.provider.requests().len(), 1);
 }
 
 #[test]
@@ -392,4 +495,84 @@ fn improve_text_returns_the_two_labelled_parts() {
         }
         other => panic!("expected an improvement, got {other:?}"),
     }
+}
+
+#[test]
+fn the_popup_starts_with_the_selection_captured_before_it_was_shown() {
+    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+
+    assert_eq!(
+        harness.engine().popup_prefill(),
+        PopupPrefill::Selection(Selection::new("Xin chào"))
+    );
+    assert!(
+        harness.provider.requests().is_empty(),
+        "capturing the prefill must not translate anything yet"
+    );
+}
+
+#[test]
+fn the_popup_says_nothing_was_selected_for_an_empty_selection() {
+    let harness = Harness::new(FakeCapture::with_selection("   \n"), provider_saying("Hello"));
+
+    assert_eq!(harness.engine().popup_prefill(), PopupPrefill::NothingSelected);
+}
+
+#[test]
+fn the_popup_says_nothing_was_selected_when_the_focused_app_has_no_selection() {
+    let harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+
+    assert_eq!(harness.engine().popup_prefill(), PopupPrefill::NothingSelected);
+}
+
+#[test]
+fn the_popup_reports_a_missing_accessibility_grant_as_a_typed_failure() {
+    let harness = Harness::new(
+        FakeCapture::failing_reads_with(CaptureError::NoAccessibility),
+        provider_saying("Hello"),
+    );
+
+    assert_eq!(
+        harness.engine().popup_prefill(),
+        PopupPrefill::Failure(CaptureError::NoAccessibility)
+    );
+}
+
+#[test]
+fn the_popup_reports_secure_input_as_a_typed_failure() {
+    let harness = Harness::new(
+        FakeCapture::failing_reads_with(CaptureError::SecureInput),
+        provider_saying("Hello"),
+    );
+
+    assert_eq!(
+        harness.engine().popup_prefill(),
+        PopupPrefill::Failure(CaptureError::SecureInput)
+    );
+}
+
+#[test]
+fn translating_the_same_text_twice_through_the_engine_asks_the_provider_once() {
+    let provider = provider_saying("Hello");
+    let engine = TranslatorEngine::new(
+        Arc::new(FakeCapture::with_selection("unused")),
+        Arc::new(CachedProvider::new(Arc::new(provider.clone()), 8)),
+        Arc::new(RecordingSpeech::default()),
+        Arc::new(InMemoryHistory::default()),
+        Arc::new(InMemorySettings::with(Settings {
+            language_pair: LanguagePair::new(Language::english(), Language::vietnamese()),
+            ..Settings::default()
+        })),
+        Arc::new(FakeCredentials::default()),
+    );
+
+    let first = engine
+        .translate_text("Xin chào", Mode::Translate)
+        .expect("first translation");
+    let second = engine
+        .translate_text("Xin chào", Mode::Translate)
+        .expect("second translation");
+
+    assert_eq!(first, second);
+    assert_eq!(provider.requests().len(), 1);
 }

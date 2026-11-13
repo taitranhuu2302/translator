@@ -1,8 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["crates/core", "crates/platform-macos", "crates/app"]
-# The panel spike is a standalone crate; it is deleted when the real panel lands (ticket 04).
-exclude = ["spike/panel"]
 
 [workspace.package]
 version = "0.1.0"

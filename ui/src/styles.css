@@ -265,3 +265,98 @@ button.primary {
   align-self: flex-end;
   padding: 6px 16px;
 }
+
+/* --- Quick Translate popup ------------------------------------------------ */
+
+.popup-page {
+  overflow: hidden;
+}
+
+.popup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100vh;
+  padding: 14px 16px 10px;
+  overflow: auto;
+}
+
+.popup-head {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.popup-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.popup-provider {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: GrayText;
+}
+
+.popup-source {
+  display: -webkit-box;
+  overflow: hidden;
+  color: GrayText;
+  font-size: 11px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.popup-status {
+  color: GrayText;
+  font-size: 13px;
+}
+
+.popup-answer {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.popup-result {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.popup-copy {
+  align-self: flex-start;
+}
+
+.popup-failure {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--edge);
+  border-left: 3px solid var(--danger);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.popup-failure.offline {
+  border-left-color: var(--warning);
+}
+
+.popup-failure.capture {
+  border-left-color: var(--accent);
+}
+
+.popup-hint {
+  margin-top: auto;
+  text-align: right;
+}
+

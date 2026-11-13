@@ -2,7 +2,7 @@
 
 A macOS menu-bar app for translating text you have selected in any app — without leaving the app you are typing in.
 
-**Status: in progress.** The Rust workspace, the signed bundle and the engine seam exist (ticket 01), the app reads the Selection and opens the Translate Window with it (ticket 02), and `⌃⌥S` now reads the Selection aloud in the system voice (ticket 03). Quick Translate, Replace, providers, Improve and History are still stubs behind the same engine seam. The riskiest assumption is proven separately: a Tauri window becomes a non-activating `NSPanel` that receives keys while the app behind it keeps focus (`spike/panel`).
+**Status: in progress.** The Rust workspace, the signed bundle and the engine seam exist (ticket 01), the app reads the Selection and opens the Translate Window with it (ticket 02), `⌃⌥S` reads the Selection aloud in the system voice (ticket 03), and `⌃⌥D` opens the Quick Translate popup beside the cursor, translated by the keyless MyMemory provider (ticket 04). Replace, Improve and History are still stubs behind the same engine seam.
 
 ## Shortcuts
 
@@ -47,14 +47,6 @@ See [ADR-0001](docs/adr/0001-rust-core-with-tauri-shell.md) for the stack and [A
 ```
 
 `scripts/build.sh` packages a real `.app` with `LSUIElement` and signs it with the stable local identity; it refuses to package unsigned or ad-hoc. See [ADR-0004](docs/adr/0004-stable-signing-from-first-commit.md).
-
-The panel spike (deleted when the real popup lands in ticket 04) is still runnable:
-
-```bash
-cargo run --manifest-path spike/panel/Cargo.toml
-```
-
-Press `⌃⌥D` to show the panel; `Enter` or `Escape` hides it; `⌃C` quits. No bundle, signing or permission is needed for the spike.
 
 ## Project docs
 

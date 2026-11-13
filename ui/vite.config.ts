@@ -11,5 +11,12 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      // Two windows: the Translate Window and the Quick Translate popup.
+      input: {
+        main: "index.html",
+        popup: "popup.html",
+      },
+    },
   },
 });

@@ -3,7 +3,7 @@
 /// surfaces. Compiling them here keeps every unsafe platform call inside
 /// `platform-macos` (docs/adr/0001-rust-core-with-tauri-shell.md).
 fn main() {
-    for file in ["capture", "speech"] {
+    for file in ["capture", "clipboard", "speech", "pointer"] {
         println!("cargo:rerun-if-changed=src/macos/{file}.m");
         println!("cargo:rerun-if-changed=src/macos/{file}.h");
     }
@@ -14,7 +14,9 @@ fn main() {
 
     cc::Build::new()
         .file("src/macos/capture.m")
+        .file("src/macos/clipboard.m")
         .file("src/macos/speech.m")
+        .file("src/macos/pointer.m")
         .flag("-fobjc-arc")
         .flag("-fblocks")
         .flag("-Wall")

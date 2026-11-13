@@ -5,16 +5,19 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use std::collections::VecDeque;
+
 use crate::error::{
-    CaptureError, CredentialError, HistoryError, ProviderError, SettingsError, SpeechError,
+    CaptureError, CredentialError, HistoryError, HttpError, ProviderError, SettingsError,
+    SpeechError,
 };
 use crate::language::Language;
 use crate::model::{
     HistoryEntry, Improvement, ProviderId, ProviderTranslation, Selection, Settings, Timestamp,
 };
 use crate::ports::{
-    CredentialStore, HistoryStore, ImproveRequest, SelectionCapture, SettingsStore, SpeechOutput,
-    TranslateRequest, TranslationProvider,
+    CredentialStore, HistoryStore, HttpClient, HttpRequest, HttpResponse, ImproveRequest,
+    SelectionCapture, SettingsStore, SpeechOutput, TranslateRequest, TranslationProvider,
 };
 
 /// A capture port that can be told to succeed, fail, or accept or refuse writes.
@@ -218,6 +221,70 @@ impl TranslationProvider for FakeProvider {
     }
 }
 
+/// An HTTP client that records every request and answers from a script. It is the
+/// only way provider tests touch the wire: no test opens a socket.
+#[derive(Clone, Default)]
+pub struct FakeHttpClient {
+    state: Arc<Mutex<HttpState>>,
+}
+
+#[derive(Default)]
+struct HttpState {
+    /// Answers consumed in order. An empty script uses `fallback`.
+    scripted: VecDeque<Result<HttpResponse, HttpError>>,
+    fallback: Option<Result<HttpResponse, HttpError>>,
+    requests: Vec<HttpRequest>,
+}
+
+impl FakeHttpClient {
+    /// Always answer with this response (status and body are the provider's to
+    /// interpret, exactly as a real client would hand them over).
+    pub fn responding_with(status: u16, body: impl Into<String>) -> Self {
+        let fake = Self::default();
+        fake.state.lock().unwrap().fallback = Some(Ok(HttpResponse {
+            status,
+            body: body.into(),
+        }));
+        fake
+    }
+
+    /// Always fail this way.
+    pub fn failing_with(error: HttpError) -> Self {
+        let fake = Self::default();
+        fake.state.lock().unwrap().fallback = Some(Err(error));
+        fake
+    }
+
+    /// Answer each request in turn. Once the script is spent, requests fail as
+    /// "the test scripted no answer", which is the shape chunked translation
+    /// needs: a missing answer is a test bug, not a silent success.
+    pub fn responding_in_turn(answers: Vec<Result<HttpResponse, HttpError>>) -> Self {
+        let fake = Self::default();
+        fake.state.lock().unwrap().scripted = answers.into();
+        fake
+    }
+
+    pub fn requests(&self) -> Vec<HttpRequest> {
+        self.state.lock().unwrap().requests.clone()
+    }
+}
+
+impl HttpClient for FakeHttpClient {
+    fn execute(&self, request: &HttpRequest) -> Result<HttpResponse, HttpError> {
+        let mut state = self.state.lock().unwrap();
+        state.requests.push(request.clone());
+        if let Some(answer) = state.scripted.pop_front() {
+            return answer;
+        }
+        match &state.fallback {
+            Some(answer) => answer.clone(),
+            None => Err(HttpError::Request {
+                message: "the test scripted no answer".to_owned(),
+            }),
+        }
+    }
+}
+
 /// One thing the fake speech port was asked to say, and the language the engine
 /// asked for it to be said in.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -265,28 +332,46 @@ impl SpeechOutput for RecordingSpeech {
     }
 }
 
-/// An in-memory history store. Search matches either side, newest first.
+/// An in-memory history store. Search matches either side, newest first. Writes
+/// can be scripted to fail, which is how the best-effort rule is tested.
 #[derive(Clone, Default)]
 pub struct InMemoryHistory {
-    entries: Arc<Mutex<Vec<HistoryEntry>>>,
+    state: Arc<Mutex<HistoryState>>,
+}
+
+#[derive(Default)]
+struct HistoryState {
+    entries: Vec<HistoryEntry>,
+    write_error: Option<HistoryError>,
 }
 
 impl InMemoryHistory {
+    pub fn failing_writes_with(error: HistoryError) -> Self {
+        let fake = Self::default();
+        fake.state.lock().unwrap().write_error = Some(error);
+        fake
+    }
+
     pub fn entries(&self) -> Vec<HistoryEntry> {
-        self.entries.lock().unwrap().clone()
+        self.state.lock().unwrap().entries.clone()
     }
 }
 
 impl HistoryStore for InMemoryHistory {
     fn record(&self, entry: &HistoryEntry) -> Result<(), HistoryError> {
-        self.entries.lock().unwrap().push(entry.clone());
+        let mut state = self.state.lock().unwrap();
+        if let Some(error) = &state.write_error {
+            return Err(error.clone());
+        }
+        state.entries.push(entry.clone());
         Ok(())
     }
 
     fn search(&self, query: &str, limit: usize) -> Result<Vec<HistoryEntry>, HistoryError> {
         let needle = query.to_lowercase();
-        let entries = self.entries.lock().unwrap();
-        Ok(entries
+        let state = self.state.lock().unwrap();
+        Ok(state
+            .entries
             .iter()
             .rev()
             .filter(|entry| {
@@ -299,10 +384,10 @@ impl HistoryStore for InMemoryHistory {
     }
 
     fn purge_older_than(&self, cutoff: Timestamp) -> Result<usize, HistoryError> {
-        let mut entries = self.entries.lock().unwrap();
-        let before = entries.len();
-        entries.retain(|entry| entry.created_at >= cutoff);
-        Ok(before - entries.len())
+        let mut state = self.state.lock().unwrap();
+        let before = state.entries.len();
+        state.entries.retain(|entry| entry.created_at >= cutoff);
+        Ok(before - state.entries.len())
     }
 }
 

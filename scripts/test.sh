@@ -14,6 +14,9 @@ fi
 echo "==> frontend typecheck"
 npm --prefix ui run typecheck
 
+echo "==> frontend tests"
+npm --prefix ui run test
+
 # `cargo test` compiles the Tauri shell, which embeds ui/dist at compile time.
 echo "==> frontend build"
 npm --prefix ui run build

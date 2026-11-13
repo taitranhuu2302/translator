@@ -48,6 +48,15 @@ export type Prefill =
   | { selection: Selection }
   | { failure: EngineError };
 
+/**
+ * What Quick Translate starts with, captured before the popup is shown. There
+ * is no empty `selection` here: an empty Selection means nothing was selected.
+ */
+export type PopupPrefill =
+  | { selection: Selection }
+  | "nothing_selected"
+  | { failure: CaptureError };
+
 export interface Translation {
   text: string;
   provider: ProviderId;
@@ -159,6 +168,17 @@ export const ipc = {
   takeSelectionPrefill: (): Promise<Prefill | null> =>
     call("take_selection_prefill"),
 
+  /** The Selection captured before the popup was shown, or null if none is
+   * waiting. The popup claims this on mount and on every `popup-prefill`. */
+  takePopupPrefill: (): Promise<PopupPrefill | null> =>
+    call("take_popup_prefill"),
+
+  /** Dismiss the popup from inside it (Escape, or losing focus). */
+  hidePopup: (): Promise<void> => call("hide_popup"),
+
+  /** The popup's Copy button: plain text to the system clipboard. */
+  copyText: (text: string): Promise<void> => call("copy_text", { text }),
+
   accessibilityGranted: (): Promise<boolean> => call("accessibility_granted"),
 
   /** Ask macOS to prompt for Accessibility; resolves to the state after asking. */
@@ -201,7 +221,14 @@ export const EVENTS = {
   translationError: "translation-error",
   providerStatus: "provider-status",
   selectionPrefill: "selection-prefill",
+  popupPrefill: "popup-prefill",
 } as const;
+
+/** Emitted after the popup is shown. The payload is empty: call
+ * `takePopupPrefill` to claim what was captured. */
+export function onPopupPrefill(handler: () => void): Promise<UnlistenFn> {
+  return listen(EVENTS.popupPrefill, () => handler());
+}
 
 /** Emitted after the window is opened from a Selection. The payload is empty:
  * call `takeSelectionPrefill` to claim what was captured. */

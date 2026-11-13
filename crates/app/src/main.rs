@@ -2,6 +2,8 @@
 //! Views, panels and menu items call these commands; they never reach a port
 //! implementation directly.
 
+mod panel;
+
 use std::sync::{Arc, Mutex};
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -10,21 +12,28 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use translator_core::{
-    EngineError, HistoryEntry, Mode, ProviderStatus, QuickTranslation, ReadAloud, Replacement,
-    Selection, Settings, SpeechError, TextOutcome, TranslatorEngine, UnconfiguredProvider,
+    CachedProvider, EngineError, HistoryEntry, Mode, MyMemoryProvider, PopupPrefill,
+    ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud, Replacement, Selection, Settings,
+    SpeechError, TextOutcome, TranslatorEngine, UreqHttpClient,
 };
 use translator_platform_macos::{
-    MacCredentialStore, MacHistoryStore, MacSelectionCapture, MacSettingsStore, MacSpeechOutput,
+    clipboard, MacCredentialStore, MacHistoryStore, MacSelectionCapture, MacSettingsStore,
+    MacSpeechOutput,
 };
 
 /// Used when the settings file cannot be read, so the shortcuts still work.
+const DEFAULT_QUICK_TRANSLATE_SHORTCUT: &str = "Ctrl+Alt+D";
 const DEFAULT_TRANSLATE_SHORTCUT: &str = "Ctrl+Alt+E";
 const DEFAULT_READ_ALOUD_SHORTCUT: &str = "Ctrl+Alt+S";
+
+/// How many translations the in-memory cache remembers.
+const TRANSLATION_CACHE_SIZE: usize = 100;
 
 /// What a registered shortcut does. The one global handler routes on the
 /// shortcut's identity because one plugin owns every binding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Route {
+    QuickTranslate,
     TranslateWindow,
     ReadAloud,
 }
@@ -34,6 +43,7 @@ enum Route {
 /// wrong action.
 #[derive(Clone, Copy, Default)]
 struct ShortcutRoutes {
+    quick_translate: Option<Shortcut>,
     translate_window: Option<Shortcut>,
     read_aloud: Option<Shortcut>,
 }
@@ -44,6 +54,8 @@ impl ShortcutRoutes {
             Some(Route::ReadAloud)
         } else if is_the_same_binding(self.translate_window, shortcut) {
             Some(Route::TranslateWindow)
+        } else if is_the_same_binding(self.quick_translate, shortcut) {
+            Some(Route::QuickTranslate)
         } else {
             None
         }
@@ -64,6 +76,8 @@ struct AppState {
     /// take it. Capture happens before the window is shown, while the app the
     /// user was typing in still has focus.
     prefill: Mutex<Option<Prefill>>,
+    /// The same idea for Quick Translate: captured before the popup is shown.
+    popup_prefill: Mutex<Option<PopupPrefill>>,
     routes: Mutex<ShortcutRoutes>,
 }
 
@@ -74,6 +88,14 @@ impl AppState {
 
     fn take_prefill(&self) -> Option<Prefill> {
         self.prefill.lock().expect("prefill lock").take()
+    }
+
+    fn put_popup_prefill(&self, prefill: PopupPrefill) {
+        *self.popup_prefill.lock().expect("popup prefill lock") = Some(prefill);
+    }
+
+    fn take_popup_prefill(&self) -> Option<PopupPrefill> {
+        self.popup_prefill.lock().expect("popup prefill lock").take()
     }
 
     fn route(&self, shortcut: &Shortcut) -> Option<Route> {
@@ -151,6 +173,28 @@ async fn take_selection_prefill(state: State<'_, AppState>) -> Result<Option<Pre
     Ok(state.take_prefill())
 }
 
+/// The Selection captured before the popup was shown, or the typed reason there
+/// is none. Claiming it answers `None` until the next Quick Translate.
+#[tauri::command]
+async fn take_popup_prefill(state: State<'_, AppState>) -> Result<Option<PopupPrefill>, ()> {
+    Ok(state.take_popup_prefill())
+}
+
+/// Dismiss the popup. Panel operations must run on the main thread.
+#[tauri::command]
+async fn hide_popup(app: AppHandle) -> Result<(), ()> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || panel::hide(&handle))
+        .map_err(|_| ())
+}
+
+/// The popup's Copy button. Writing through AppKit does not depend on the web
+/// view's clipboard permission.
+#[tauri::command]
+async fn copy_text(text: String) -> Result<(), ()> {
+    clipboard::write_text(&text).map_err(|_| ())
+}
+
 #[tauri::command]
 async fn accessibility_granted(state: State<'_, AppState>) -> Result<bool, ()> {
     Ok(state.engine.accessibility_granted())
@@ -169,6 +213,28 @@ async fn open_accessibility_settings(state: State<'_, AppState>) -> Result<(), E
 #[tauri::command]
 async fn complete_onboarding(state: State<'_, AppState>) -> Result<Settings, EngineError> {
     state.engine.complete_onboarding()
+}
+
+/// Quick Translate: capture the Selection on a worker thread **before** the
+/// panel is shown, while the source app still owns focus, then position and show
+/// the panel on the main thread. Showing first would read this app instead.
+fn open_quick_translate(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let prefill = app.state::<AppState>().engine.popup_prefill();
+        app.state::<AppState>().put_popup_prefill(prefill);
+
+        let handle = app.clone();
+        if let Err(error) = app.run_on_main_thread(move || {
+            if let Err(error) = panel::show(&handle) {
+                eprintln!("Translator: the Quick Translate popup could not open: {error}");
+                return;
+            }
+            let _ = handle.emit_to(panel::POPUP_LABEL, panel::POPUP_PREFILL_EVENT, ());
+        }) {
+            eprintln!("Translator: the Quick Translate popup could not be scheduled: {error}");
+        }
+    });
 }
 
 /// Capture the Selection now, while the app the user is working in is still
@@ -277,9 +343,16 @@ fn build_tray(app: &AppHandle, accelerator: &str) -> tauri::Result<()> {
 }
 
 fn main() {
+    // The keyless provider answers before any key is configured; the cache in
+    // front of the ladder makes a repeated Selection free.
+    let http = Arc::new(UreqHttpClient::default());
+    let my_memory = Arc::new(MyMemoryProvider::new(http));
+    let ladder = Arc::new(ProviderLadder::single(my_memory));
+    let provider = Arc::new(CachedProvider::new(ladder, TRANSLATION_CACHE_SIZE));
+
     let engine = TranslatorEngine::new(
         Arc::new(MacSelectionCapture),
-        Arc::new(UnconfiguredProvider),
+        provider,
         Arc::new(MacSpeechOutput),
         Arc::new(MacHistoryStore),
         Arc::new(MacSettingsStore::default()),
@@ -288,6 +361,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_nspanel::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -295,6 +369,7 @@ fn main() {
                         return;
                     }
                     match app.state::<AppState>().route(shortcut) {
+                        Some(Route::QuickTranslate) => open_quick_translate(app),
                         Some(Route::TranslateWindow) => open_translate_window(app),
                         Some(Route::ReadAloud) => read_aloud_selection(app),
                         None => {}
@@ -305,6 +380,7 @@ fn main() {
         .manage(AppState {
             engine,
             prefill: Mutex::new(None),
+            popup_prefill: Mutex::new(None),
             routes: Mutex::new(ShortcutRoutes::default()),
         })
         .invoke_handler(tauri::generate_handler![
@@ -317,6 +393,9 @@ fn main() {
             save_settings,
             search_history,
             take_selection_prefill,
+            take_popup_prefill,
+            hide_popup,
+            copy_text,
             accessibility_granted,
             request_accessibility,
             open_accessibility_settings,
@@ -327,6 +406,10 @@ fn main() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let settings = app.state::<AppState>().engine.settings();
+            let quick_translate_binding = settings
+                .as_ref()
+                .map(|settings| settings.shortcuts.quick_translate.clone())
+                .unwrap_or_else(|_| DEFAULT_QUICK_TRANSLATE_SHORTCUT.to_owned());
             let translate_binding = settings
                 .as_ref()
                 .map(|settings| settings.shortcuts.translate_window.clone())
@@ -338,7 +421,21 @@ fn main() {
 
             build_tray(app.handle(), &translate_binding)?;
 
+            // The popup window exists from startup (hidden) and is converted
+            // once. Losing key is the dismissal gesture: clicking anywhere else
+            // closes it, and typing returns to the source app.
+            panel::prepare(app.handle())?;
+            if let Some(window) = app.get_webview_window(panel::POPUP_LABEL) {
+                let handle = app.handle().clone();
+                window.on_window_event(move |event| {
+                    if matches!(event, tauri::WindowEvent::Focused(false)) {
+                        panel::hide(&handle);
+                    }
+                });
+            }
+
             let routes = ShortcutRoutes {
+                quick_translate: register_shortcut(app.handle(), &quick_translate_binding),
                 translate_window: register_shortcut(app.handle(), &translate_binding),
                 read_aloud: register_shortcut(app.handle(), &read_aloud_binding),
             };
@@ -375,10 +472,15 @@ mod tests {
     #[test]
     fn each_registered_shortcut_routes_to_its_own_action() {
         let routes = ShortcutRoutes {
+            quick_translate: Some(shortcut("Ctrl+Alt+D")),
             translate_window: Some(shortcut("Ctrl+Alt+E")),
             read_aloud: Some(shortcut("Ctrl+Alt+S")),
         };
 
+        assert_eq!(
+            routes.route(&shortcut("Ctrl+Alt+D")),
+            Some(Route::QuickTranslate)
+        );
         assert_eq!(
             routes.route(&shortcut("Ctrl+Alt+E")),
             Some(Route::TranslateWindow)
@@ -392,6 +494,7 @@ mod tests {
     #[test]
     fn a_shortcut_that_did_not_register_routes_nowhere() {
         let routes = ShortcutRoutes {
+            quick_translate: None,
             translate_window: Some(shortcut("Ctrl+Alt+E")),
             read_aloud: None,
         };

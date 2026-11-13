@@ -2,12 +2,44 @@
 //! drive the engine with fakes and a second platform can supply its own bindings.
 
 use crate::error::{
-    CaptureError, CredentialError, HistoryError, ProviderError, SettingsError, SpeechError,
+    CaptureError, CredentialError, HistoryError, HttpError, ProviderError, SettingsError,
+    SpeechError,
 };
 use crate::language::Language;
 use crate::model::{
     HistoryEntry, Improvement, ProviderId, ProviderTranslation, Selection, Settings, Timestamp,
 };
+
+/// The HTTP methods the providers use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HttpMethod {
+    Get,
+    Post,
+}
+
+/// One request to the network. Providers build this; the client runs it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpRequest {
+    pub method: HttpMethod,
+    pub url: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Option<String>,
+}
+
+/// A response that arrived, whatever its status. Provider errors are semantic and
+/// live in the body, so a 4xx/5xx is still an answer the provider must read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HttpResponse {
+    pub status: u16,
+    pub body: String,
+}
+
+/// The engine's only route to the network. Providers depend on this trait, never
+/// on a concrete client, so tests can script every answer and assert the exact
+/// URL and query they were given.
+pub trait HttpClient: Send + Sync {
+    fn execute(&self, request: &HttpRequest) -> Result<HttpResponse, HttpError>;
+}
 
 /// Reads the Selection from the focused app and overwrites it on Replace.
 pub trait SelectionCapture: Send + Sync {
