@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] `⌃⌥D` with a Selection opens the popup next to the cursor and shows a translating state immediately, before any network response
 - [ ] The translation replaces the translating state in the same popup

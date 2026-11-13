@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Selecting English text and pressing `⌃⌥S` speaks the Selection with the system speech voice
 - [ ] Read Aloud speaks only the Selection and never a translation
