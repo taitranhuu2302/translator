@@ -9,5 +9,7 @@ description = "The only crate that may touch macOS APIs; implements the core por
 cc = "1"
 
 [dependencies]
+security-framework = "3"
+security-framework-sys = "2"
 serde_json = { workspace = true }
 translator-core = { workspace = true }

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::ProviderError;
 use crate::language::Language;
-use crate::model::{Improvement, ProviderTranslation};
+use crate::model::{Improvement, ProviderId, ProviderTranslation};
 use crate::ports::{
     ImproveRequest, TranslateRequest, TranslationProvider,
 };
@@ -111,6 +111,16 @@ impl TranslationProvider for CachedProvider {
     /// stale wording in front of the user for longer than it helps.
     fn improve(&self, request: &ImproveRequest) -> Result<Improvement, ProviderError> {
         self.inner.improve(request)
+    }
+
+    /// The cache sits in front of the ladder, so it must not hide which rungs the
+    /// session has skipped.
+    fn skipped(&self) -> Vec<ProviderId> {
+        self.inner.skipped()
+    }
+
+    fn clear_skip(&self, provider: ProviderId) {
+        self.inner.clear_skip(provider)
     }
 }
 

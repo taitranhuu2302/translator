@@ -33,6 +33,16 @@ pub enum ProviderId {
     Groq,
 }
 
+impl std::fmt::Display for ProviderId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            ProviderId::Azure => "Azure",
+            ProviderId::MyMemory => "MyMemory",
+            ProviderId::Groq => "Groq",
+        })
+    }
+}
+
 /// What the provider port hands back: the translation plus who answered it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderTranslation {
@@ -81,6 +91,10 @@ pub struct Settings {
     pub language_pair: LanguagePair,
     pub shortcuts: ShortcutBindings,
     pub start_at_login: bool,
+    /// The Azure resource's region, e.g. `westeurope`. Empty means a global
+    /// resource, in which case no `Ocp-Apim-Subscription-Region` header is sent.
+    #[serde(default)]
+    pub azure_region: String,
     /// Written once the user dismisses the onboarding. Settings files written
     /// before onboarding existed load as `false`, which is what first launch means.
     #[serde(default)]
@@ -108,11 +122,17 @@ impl Default for ShortcutBindings {
     }
 }
 
-/// Which providers have an API key in the credential store.
+/// Which providers have an API key in the credential store, and which the
+/// session has skipped after an auth or quota failure. A skipped provider is not
+/// tried again until the app restarts or its key is saved again.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderStatus {
     pub azure_configured: bool,
     pub groq_configured: bool,
+    #[serde(default)]
+    pub azure_skipped: bool,
+    #[serde(default)]
+    pub groq_skipped: bool,
 }
 
 /// What the Quick Translate popup starts with, captured before the panel is

@@ -10,8 +10,8 @@ use translator_core::testing::{
 };
 use translator_core::{
     CachedProvider, CaptureError, EngineError, Improvement, Language, LanguagePair, Mode,
-    PopupPrefill, ProviderId, ProviderTranslation, Selection, Settings, SpeechError, TextOutcome,
-    TranslateRequest, Translation, TranslatorEngine,
+    PopupPrefill, ProviderId, ProviderTranslation, Selection, Settings, SettingsStore, SpeechError,
+    TextOutcome, TranslateRequest, Translation, TranslatorEngine,
 };
 
 struct Harness {
@@ -488,6 +488,75 @@ fn provider_status_reports_which_keys_are_stored() {
 
     assert!(status.azure_configured);
     assert!(!status.groq_configured);
+}
+
+#[test]
+fn provider_status_reports_which_providers_the_session_has_skipped() {
+    let mut harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+    harness.provider = FakeProvider::default().skipping(ProviderId::Azure);
+
+    let status = harness.engine().provider_status().expect("provider status");
+
+    assert!(status.azure_skipped);
+    assert!(!status.groq_skipped);
+}
+
+#[test]
+fn saving_a_key_stores_it_trimmed_and_forgets_the_session_skip() {
+    let mut harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+    harness.provider = FakeProvider::default().skipping(ProviderId::Azure);
+
+    let status = harness
+        .engine()
+        .save_provider_key(ProviderId::Azure, "  new-azure-key\n")
+        .expect("the key is saved");
+
+    assert!(status.azure_configured);
+    assert!(!status.azure_skipped, "a fixed key is worth trying again");
+    assert_eq!(
+        harness.credentials.secrets().get(&ProviderId::Azure),
+        Some(&"new-azure-key".to_owned())
+    );
+}
+
+#[test]
+fn saving_a_blank_key_clears_the_stored_key_without_touching_the_settings_file() {
+    let mut harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+    harness.credentials = FakeCredentials::with_secret(ProviderId::Azure, "old-azure-key");
+    harness.provider = FakeProvider::default().skipping(ProviderId::Azure);
+
+    let status = harness
+        .engine()
+        .save_provider_key(ProviderId::Azure, "   ")
+        .expect("a blank key means clear");
+
+    assert!(!status.azure_configured);
+    assert!(!status.azure_skipped);
+    assert!(harness.credentials.secrets().is_empty());
+    assert_eq!(
+        harness.settings.load().expect("settings load"),
+        Settings {
+            language_pair: LanguagePair::new(Language::english(), Language::vietnamese()),
+            ..Settings::default()
+        },
+        "the key never lands in the settings file"
+    );
+}
+
+#[test]
+fn clearing_a_key_removes_it_and_forgets_the_session_skip() {
+    let mut harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+    harness.credentials = FakeCredentials::with_secret(ProviderId::Azure, "old-azure-key");
+    harness.provider = FakeProvider::default().skipping(ProviderId::Azure);
+
+    let status = harness
+        .engine()
+        .clear_provider_key(ProviderId::Azure)
+        .expect("the key is cleared");
+
+    assert!(!status.azure_configured);
+    assert!(!status.azure_skipped);
+    assert!(harness.credentials.secrets().is_empty());
 }
 
 #[test]

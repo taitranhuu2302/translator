@@ -8,6 +8,7 @@ import {
   type Settings,
 } from "./ipc";
 import { Onboarding } from "./Onboarding";
+import { ProviderSettings } from "./ProviderSettings";
 
 const FALLBACK_SHORTCUT = "Ctrl+Alt+E";
 
@@ -167,6 +168,13 @@ export function App() {
           <p className="empty">The translation will appear here.</p>
         </section>
       </div>
+
+      {settings ? (
+        <details className="provider-details">
+          <summary>Provider keys</summary>
+          <ProviderSettings settings={settings} onSettingsSaved={setSettings} />
+        </details>
+      ) : null}
 
       {settings && !settings.onboarding_seen ? (
         <Onboarding

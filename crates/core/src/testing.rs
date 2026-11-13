@@ -170,6 +170,7 @@ struct ProviderState {
     improve_error: Option<ProviderError>,
     requests: Vec<TranslateRequest>,
     improve_requests: Vec<ImproveRequest>,
+    skipped: Vec<ProviderId>,
 }
 
 impl FakeProvider {
@@ -192,6 +193,13 @@ impl FakeProvider {
 
     pub fn failing_improve_with(self, error: ProviderError) -> Self {
         self.state.lock().unwrap().improve_error = Some(error);
+        self
+    }
+
+    /// Report a provider as skipped for this session, as the real ladder does
+    /// after an auth or quota failure.
+    pub fn skipping(self, provider: ProviderId) -> Self {
+        self.state.lock().unwrap().skipped.push(provider);
         self
     }
 
@@ -224,6 +232,18 @@ impl TranslationProvider for FakeProvider {
             return Err(error.clone());
         }
         state.improvement.clone().ok_or(ProviderError::NotConfigured)
+    }
+
+    fn skipped(&self) -> Vec<ProviderId> {
+        self.state.lock().unwrap().skipped.clone()
+    }
+
+    fn clear_skip(&self, provider: ProviderId) {
+        self.state
+            .lock()
+            .unwrap()
+            .skipped
+            .retain(|skipped| *skipped != provider);
     }
 }
 

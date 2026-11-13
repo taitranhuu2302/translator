@@ -201,10 +201,21 @@ function formatProviderFailure(error: ProviderError): PopupFailure {
     };
   }
   if ("authentication_failed" in error) {
+    const { provider, cause } = error.authentication_failed;
+    // A refused resource still has a working key: pointing the user at the key
+    // (or at billing) would send them to the wrong fix.
+    if (cause === "resource_not_authorized") {
+      return {
+        kind: "provider",
+        title: `${providerLabel(provider)} refused the request for this resource.`,
+        detail:
+          "The key is fine. Check the Azure resource in Settings: it may be disabled, suspended, or in another region.",
+      };
+    }
     return {
       kind: "provider",
       title: "The provider rejected its key.",
-      detail: `${providerLabel(error.authentication_failed.provider)} needs a new key in Settings.`,
+      detail: `${providerLabel(provider)} needs a new key in Settings.`,
     };
   }
   if ("network" in error) {

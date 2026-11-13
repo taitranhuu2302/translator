@@ -73,6 +73,44 @@ describe("the Quick Translate popup", () => {
     expect(failure.title.toLowerCase()).not.toContain("offline");
   });
 
+  it("a bad key names the provider and points at Settings", () => {
+    const failure = formatFailure({
+      provider: {
+        authentication_failed: { provider: "azure", cause: "invalid_key" },
+      },
+    });
+
+    expect(failure.kind).toBe("provider");
+    expect(failure.title.toLowerCase()).toContain("key");
+    expect(failure.detail).toContain("Azure");
+    expect(failure.detail).toContain("new key in Settings");
+  });
+
+  it("an authentication failure written before the cause points at the key", () => {
+    const failure = formatFailure({
+      provider: { authentication_failed: { provider: "azure" } },
+    });
+
+    expect(failure.detail).toContain("new key in Settings");
+  });
+
+  it("a refused Azure resource points at the resource, never at billing quota", () => {
+    const failure = formatFailure({
+      provider: {
+        authentication_failed: {
+          provider: "azure",
+          cause: "resource_not_authorized",
+        },
+      },
+    });
+
+    expect(failure.kind).toBe("provider");
+    expect(failure.title).toContain("Azure");
+    expect(failure.detail.toLowerCase()).toContain("resource");
+    expect(failure.detail.toLowerCase()).not.toContain("quota");
+    expect(failure.detail.toLowerCase()).not.toContain("rejected its key");
+  });
+
   it("explains a capture failure from the prefill", () => {
     const state = reduce(OPENING, {
       type: "prefill",

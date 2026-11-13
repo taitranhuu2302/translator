@@ -11,6 +11,7 @@ mod capture;
 #[path = "capture_unsupported.rs"]
 mod capture;
 pub mod clipboard;
+mod credentials;
 pub mod pointer;
 mod settings_file;
 #[cfg(target_os = "macos")]
@@ -86,23 +87,20 @@ impl HistoryStore for MacHistoryStore {
     }
 }
 
-/// The Keychain, one item per provider. REPLACED IN: ticket 10.
+/// The Keychain, one item per provider. The key never leaves the Keychain:
+/// no settings file, user default or log line ever contains it.
 pub struct MacCredentialStore;
 
 impl CredentialStore for MacCredentialStore {
-    fn get(&self, _provider: ProviderId) -> Result<Option<String>, CredentialError> {
-        Ok(None)
+    fn get(&self, provider: ProviderId) -> Result<Option<String>, CredentialError> {
+        credentials::get(provider)
     }
 
-    fn set(&self, _provider: ProviderId, _secret: &str) -> Result<(), CredentialError> {
-        Err(CredentialError::Unavailable {
-            reason: "Keychain access lands in ticket 10".to_owned(),
-        })
+    fn set(&self, provider: ProviderId, secret: &str) -> Result<(), CredentialError> {
+        credentials::set(provider, secret)
     }
 
-    fn delete(&self, _provider: ProviderId) -> Result<(), CredentialError> {
-        Err(CredentialError::Unavailable {
-            reason: "Keychain access lands in ticket 10".to_owned(),
-        })
+    fn delete(&self, provider: ProviderId) -> Result<(), CredentialError> {
+        credentials::delete(provider)
     }
 }

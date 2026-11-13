@@ -1,0 +1,26 @@
+/**
+ * The provider section's pure rules. The component only draws them, so what the
+ * status means is tested without a window or a Keychain.
+ */
+import type { ProviderStatus, Settings } from "./ipc";
+
+/** One line saying whether Azure will be used, and why not when it will not. */
+export function azureStatusLine(status: ProviderStatus): string {
+  if (status.azure_skipped) {
+    return "Skipped for this session after an authentication or quota failure. A new key is tried again.";
+  }
+  if (status.azure_configured) {
+    return "Key saved in the Keychain. Azure answers first, with MyMemory as the fallback.";
+  }
+  return "No key yet. MyMemory translates without one, so everything still works.";
+}
+
+/** The region is stored trimmed: whitespace must not become a header value. */
+export function withAzureRegion(settings: Settings, region: string): Settings {
+  return { ...settings, azure_region: region.trim() };
+}
+
+/** Save is enabled only when the region actually changed. */
+export function regionChanged(settings: Settings, region: string): boolean {
+  return region.trim() !== settings.azure_region.trim();
+}

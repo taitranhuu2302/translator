@@ -12,9 +12,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use translator_core::{
-    CachedProvider, CaptureError, EngineError, HistoryEntry, Mode, MyMemoryProvider, PopupPrefill,
-    ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud, Replacement, Selection, Settings,
-    SpeechError, TextOutcome, Translation, TranslatorEngine, UreqHttpClient,
+    AzureProvider, CachedProvider, CaptureError, EngineError, HistoryEntry, Mode, MyMemoryProvider,
+    PopupPrefill, ProviderId, ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud,
+    Replacement, Selection, Settings, SettingsStore, SpeechError, TextOutcome, Translation,
+    TranslatorEngine, UreqHttpClient,
 };
 use translator_platform_macos::{
     clipboard, MacCredentialStore, MacHistoryStore, MacSelectionCapture, MacSettingsStore,
@@ -185,6 +186,26 @@ async fn translate_text(
 #[tauri::command]
 async fn provider_status(state: State<'_, AppState>) -> Result<ProviderStatus, EngineError> {
     state.engine.provider_status()
+}
+
+/// Save one provider's API key in the Keychain. The key is passed straight to the
+/// engine and never echoed, logged or written to the settings file. An empty key
+/// clears it.
+#[tauri::command]
+async fn save_provider_key(
+    state: State<'_, AppState>,
+    provider: ProviderId,
+    key: String,
+) -> Result<ProviderStatus, EngineError> {
+    state.engine.save_provider_key(provider, &key)
+}
+
+#[tauri::command]
+async fn clear_provider_key(
+    state: State<'_, AppState>,
+    provider: ProviderId,
+) -> Result<ProviderStatus, EngineError> {
+    state.engine.clear_provider_key(provider)
 }
 
 #[tauri::command]
@@ -437,11 +458,28 @@ fn build_tray(app: &AppHandle, accelerator: &str) -> tauri::Result<()> {
 }
 
 fn main() {
-    // The keyless provider answers before any key is configured; the cache in
-    // front of the ladder makes a repeated Selection free.
+    // Azure F0 first when a key is stored, then the keyless provider. Both sit
+    // behind the cache, so a repeated Selection costs nothing. The region is read
+    // from settings per request: changing it takes effect without a restart.
     let http = Arc::new(UreqHttpClient::default());
+    let credentials = Arc::new(MacCredentialStore);
+    let settings_store = Arc::new(MacSettingsStore::default());
+    let region_settings = Arc::clone(&settings_store);
+    let azure = Arc::new(AzureProvider::new(
+        http.clone(),
+        credentials.clone(),
+        Arc::new(move || {
+            region_settings
+                .load()
+                .map(|settings| settings.azure_region)
+                .unwrap_or_default()
+        }),
+    ));
     let my_memory = Arc::new(MyMemoryProvider::new(http));
-    let ladder = Arc::new(ProviderLadder::single(my_memory));
+    let ladder = Arc::new(ProviderLadder::new(vec![
+        (ProviderId::Azure, azure),
+        (ProviderId::MyMemory, my_memory),
+    ]));
     let provider = Arc::new(CachedProvider::new(ladder, TRANSLATION_CACHE_SIZE));
 
     let engine = TranslatorEngine::new(
@@ -449,8 +487,8 @@ fn main() {
         provider,
         Arc::new(MacSpeechOutput),
         Arc::new(MacHistoryStore),
-        Arc::new(MacSettingsStore::default()),
-        Arc::new(MacCredentialStore),
+        settings_store,
+        credentials,
     );
 
     tauri::Builder::default()
@@ -485,6 +523,8 @@ fn main() {
             read_aloud,
             translate_text,
             provider_status,
+            save_provider_key,
+            clear_provider_key,
             get_settings,
             save_settings,
             search_history,

@@ -17,7 +17,7 @@ pub mod testing;
 pub use chunking::{chunk_text, join_chunks, MAX_CHUNK_CHARS};
 pub use engine::TranslatorEngine;
 pub use error::{
-    CaptureError, CredentialError, EngineError, HistoryError, HttpError, ProviderError,
+    AuthFailure, CaptureError, CredentialError, EngineError, HistoryError, HttpError, ProviderError,
     SettingsError, SpeechError,
 };
 pub use http::UreqHttpClient;
@@ -32,5 +32,5 @@ pub use ports::{
     SelectionCapture, SettingsStore, SpeechOutput, TranslateRequest, TranslationProvider,
 };
 pub use providers::{
-    CachedProvider, MyMemoryProvider, ProviderLadder, UnconfiguredProvider,
+    AzureProvider, CachedProvider, MyMemoryProvider, ProviderLadder, UnconfiguredProvider,
 };

@@ -13,6 +13,7 @@ use crate::model::{Improvement, ProviderId, ProviderTranslation};
 use crate::ports::{
     HttpClient, HttpMethod, HttpRequest, ImproveRequest, TranslateRequest, TranslationProvider,
 };
+use crate::providers::encode_query_component;
 
 pub const ENDPOINT: &str = "https://api.mymemory.translated.net/get";
 
@@ -34,9 +35,9 @@ impl MyMemoryProvider {
     ) -> Result<String, ProviderError> {
         let url = format!(
             "{ENDPOINT}?q={}&langpair={}%7C{}",
-            encode_component(text),
-            encode_component(source.code()),
-            encode_component(target.code()),
+            encode_query_component(text),
+            encode_query_component(source.code()),
+            encode_query_component(target.code()),
         );
         let response = self
             .http
@@ -181,26 +182,6 @@ fn read_answer(status: u16, body: &str) -> Result<String, ProviderError> {
 /// string `"403"`, so a plain `u16` deserialization would lose the distinction.
 fn is_success_status(status: &serde_json::Value) -> bool {
     status.as_u64() == Some(200) || status.as_str() == Some("200")
-}
-
-/// Percent-encode one query component with the RFC 3986 unreserved set. The
-/// `langpair` pipe is added as `%7C` by the caller.
-fn encode_component(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.as_bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                encoded.push(*byte as char)
-            }
-            other => {
-                const HEX: &[u8; 16] = b"0123456789ABCDEF";
-                encoded.push('%');
-                encoded.push(HEX[(other >> 4) as usize] as char);
-                encoded.push(HEX[(other & 0x0F) as usize] as char);
-            }
-        }
-    }
-    encoded
 }
 
 /// Decode the HTML entities MyMemory puts in `translatedText` (`&#39;`, `&quot;`,

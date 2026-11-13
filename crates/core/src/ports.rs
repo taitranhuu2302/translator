@@ -78,6 +78,17 @@ pub struct ImproveRequest {
 pub trait TranslationProvider: Send + Sync {
     fn translate(&self, request: &TranslateRequest) -> Result<ProviderTranslation, ProviderError>;
     fn improve(&self, request: &ImproveRequest) -> Result<Improvement, ProviderError>;
+
+    /// Providers the session has skipped after an auth or quota failure. The
+    /// engine reports this in `provider_status`; providers that do not skip
+    /// anything keep the empty default.
+    fn skipped(&self) -> Vec<ProviderId> {
+        Vec::new()
+    }
+
+    /// Forget the session skip for one provider, called when its key is saved or
+    /// cleared: an explicit fix must take effect without restarting the app.
+    fn clear_skip(&self, _provider: ProviderId) {}
 }
 
 /// Speaks the Selection with the system voice. It never speaks a translation.

@@ -360,3 +360,78 @@ button.primary {
   text-align: right;
 }
 
+
+/* --- Provider keys -------------------------------------------------------- */
+
+.provider-details {
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.provider-details > summary {
+  padding: 8px 12px;
+  color: GrayText;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.provider-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+
+.provider-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.provider-head h2 {
+  margin: 0;
+}
+
+.badge {
+  padding: 2px 7px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  color: GrayText;
+  font-size: 11px;
+}
+
+.badge.ok {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field > span {
+  font-size: 11px;
+  color: GrayText;
+}
+
+.field input {
+  padding: 5px 8px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: Canvas;
+  color: CanvasText;
+  font: inherit;
+  font-size: 12px;
+}
+
+.field input:focus {
+  border-color: var(--accent);
+  outline: none;
+}

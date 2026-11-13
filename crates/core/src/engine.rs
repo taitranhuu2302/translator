@@ -183,12 +183,42 @@ impl TranslatorEngine {
         }
     }
 
-    /// Which providers have a key in the credential store.
+    /// Which providers have a key in the credential store, and which the session
+    /// has skipped after an auth or quota failure.
     pub fn provider_status(&self) -> Result<ProviderStatus, EngineError> {
+        let skipped = self.provider.skipped();
         Ok(ProviderStatus {
             azure_configured: self.credentials.get(ProviderId::Azure)?.is_some(),
             groq_configured: self.credentials.get(ProviderId::Groq)?.is_some(),
+            azure_skipped: skipped.contains(&ProviderId::Azure),
+            groq_skipped: skipped.contains(&ProviderId::Groq),
         })
+    }
+
+    /// Save one provider's key in the Keychain. An empty or whitespace-only key
+    /// clears it, so Settings needs only one field: typing nothing means "no key".
+    /// Either way the session skip is forgotten, so a fixed key takes effect
+    /// without restarting the app.
+    pub fn save_provider_key(
+        &self,
+        provider: ProviderId,
+        key: &str,
+    ) -> Result<ProviderStatus, EngineError> {
+        let key = key.trim();
+        if key.is_empty() {
+            self.credentials.delete(provider)?;
+        } else {
+            self.credentials.set(provider, key)?;
+        }
+        self.provider.clear_skip(provider);
+        self.provider_status()
+    }
+
+    /// Forget one provider's key and its session skip.
+    pub fn clear_provider_key(&self, provider: ProviderId) -> Result<ProviderStatus, EngineError> {
+        self.credentials.delete(provider)?;
+        self.provider.clear_skip(provider);
+        self.provider_status()
     }
 
     pub fn settings(&self) -> Result<Settings, EngineError> {

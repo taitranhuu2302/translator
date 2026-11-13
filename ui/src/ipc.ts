@@ -32,6 +32,9 @@ export interface Settings {
   language_pair: LanguagePair;
   shortcuts: ShortcutBindings;
   start_at_login: boolean;
+  /** The Azure resource's region, e.g. `westeurope`. Empty means a global
+   * resource, and no region header is sent. */
+  azure_region: string;
   onboarding_seen: boolean;
 }
 
@@ -98,6 +101,9 @@ export interface HistoryEntry {
 export interface ProviderStatus {
   azure_configured: boolean;
   groq_configured: boolean;
+  /** Skipped for the rest of this session after an auth or quota failure. */
+  azure_skipped: boolean;
+  groq_skipped: boolean;
 }
 
 // --- Errors ----------------------------------------------------------------
@@ -110,11 +116,24 @@ export type CaptureError =
   | "not_writable"
   | { unavailable: { reason: string } };
 
+/**
+ * Why an authentication failure happened. A bad key is fixed with a new key; a
+ * refused resource (Azure 403/403000) has a working key and needs the Azure
+ * resource itself checked.
+ */
+export type AuthFailure = "invalid_key" | "resource_not_authorized";
+
 export type ProviderError =
   | "not_configured"
   | "offline"
   | { quota_exceeded: { provider: ProviderId } }
-  | { authentication_failed: { provider: ProviderId } }
+  | {
+      authentication_failed: {
+        provider: ProviderId;
+        /** Absent in payloads written before the cause existed: a bad key. */
+        cause?: AuthFailure;
+      };
+    }
   | { network: { provider: ProviderId; message: string } }
   | { malformed_response: { provider: ProviderId; message: string } }
   | { unavailable: { reason: string } };
@@ -165,6 +184,15 @@ export const ipc = {
   translateText: (text: string, mode: Mode): Promise<TextOutcome> =>
     call("translate_text", { text, mode }),
   providerStatus: (): Promise<ProviderStatus> => call("provider_status"),
+
+  /** Save one provider's API key in the Keychain. An empty key clears it. The
+   * key is never written to the settings file or logged. */
+  saveProviderKey: (provider: ProviderId, key: string): Promise<ProviderStatus> =>
+    call("save_provider_key", { provider, key }),
+
+  clearProviderKey: (provider: ProviderId): Promise<ProviderStatus> =>
+    call("clear_provider_key", { provider }),
+
   getSettings: (): Promise<Settings> => call("get_settings"),
   saveSettings: (settings: Settings): Promise<void> =>
     call("save_settings", { settings }),
