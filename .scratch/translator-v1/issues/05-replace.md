@@ -117,3 +117,11 @@ Proofs for the ticked boxes:
   statuses, so the corrected `AXError` values (−25201 illegal argument, −25202
   invalid element, −25204 cannot complete, −25205 unsupported, −25211 API
   disabled) are documentation here rather than wire values.
+
+## Comments
+
+- 2026-11-14 — Implemented in `8f7abe4`. The two unticked boxes and the
+  app-specific write paths still need a run on the signed bundle:
+  [`../checks/05-replace-manual.md`](../checks/05-replace-manual.md) covers
+  Safari, Chromium, Word, secure input, clipboard restoration and the exact
+  selection span.
