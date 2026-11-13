@@ -110,3 +110,7 @@ Proofs for the ticked boxes:
   part-selection and Copy, Swap and the untouched settings document, the
   remembered frame across launches and a disconnected display, closing and
   reopening, failures keeping the input, and cache/history parity.
+- 2026-11-14 — Review pass added manual case 22: the shortcuts act on the
+  window's own Selection. The spec's story 34 was the only one without a case;
+  it is now checked and mapped in
+  [`../checks/v1-manual-test-plan.md`](../checks/v1-manual-test-plan.md).
