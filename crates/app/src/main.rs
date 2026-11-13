@@ -4,6 +4,7 @@
 
 mod frame;
 mod panel;
+mod shortcuts;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -15,7 +16,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 use translator_core::{
     AzureProvider, CachedProvider, CaptureError, Direction, EngineError, GroqProvider,
     HistoryEntry, ImproveDelta, ImprovePart, Mode, MyMemoryProvider, PopupPrefill, ProviderId,
@@ -27,59 +28,11 @@ use translator_platform_macos::{
     MacSpeechOutput,
 };
 
-/// Used when the settings file cannot be read, so the shortcuts still work.
-const DEFAULT_QUICK_TRANSLATE_SHORTCUT: &str = "Ctrl+Alt+D";
-const DEFAULT_REPLACE_SHORTCUT: &str = "Ctrl+Alt+R";
-const DEFAULT_TRANSLATE_SHORTCUT: &str = "Ctrl+Alt+E";
-const DEFAULT_READ_ALOUD_SHORTCUT: &str = "Ctrl+Alt+S";
-
 /// How many translations the in-memory cache remembers.
 const TRANSLATION_CACHE_SIZE: usize = 100;
 
-/// What a registered shortcut does. The one global handler routes on the
-/// shortcut's identity because one plugin owns every binding.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Route {
-    QuickTranslate,
-    Replace,
-    TranslateWindow,
-    ReadAloud,
-}
-
-/// The shortcuts that registered successfully. A binding that could not be
-/// registered is absent, so pressing it does nothing instead of triggering the
-/// wrong action.
-#[derive(Clone, Copy, Default)]
-struct ShortcutRoutes {
-    quick_translate: Option<Shortcut>,
-    replace: Option<Shortcut>,
-    translate_window: Option<Shortcut>,
-    read_aloud: Option<Shortcut>,
-}
-
-impl ShortcutRoutes {
-    fn route(&self, shortcut: &Shortcut) -> Option<Route> {
-        if is_the_same_binding(self.read_aloud, shortcut) {
-            Some(Route::ReadAloud)
-        } else if is_the_same_binding(self.translate_window, shortcut) {
-            Some(Route::TranslateWindow)
-        } else if is_the_same_binding(self.replace, shortcut) {
-            Some(Route::Replace)
-        } else if is_the_same_binding(self.quick_translate, shortcut) {
-            Some(Route::QuickTranslate)
-        } else {
-            None
-        }
-    }
-}
-
-/// Compare the key combination, not the plugin's registration id: the id is a
-/// per-process handle, so two bindings parsed from the same string differ in it.
-fn is_the_same_binding(registered: Option<Shortcut>, shortcut: &Shortcut) -> bool {
-    registered.is_some_and(|registered| {
-        registered.mods == shortcut.mods && registered.key == shortcut.key
-    })
-}
+/// The tray item handle, named once so `AppState` can hold it.
+type TrayItem = MenuItem<tauri::Wry>;
 
 struct AppState {
     /// Shared so a command can hold it across an awaits-free worker hop while
@@ -91,7 +44,10 @@ struct AppState {
     prefill: Mutex<Option<Prefill>>,
     /// The same idea for Quick Translate: captured before the popup is shown.
     popup_prefill: Mutex<Option<PopupPrefill>>,
-    routes: Mutex<ShortcutRoutes>,
+    routes: Mutex<shortcuts::ShortcutRoutes>,
+    /// The tray's “Open Translate Window” item, kept so a rebind can update its
+    /// accelerator. The tray's menu cannot be read back from the tray itself.
+    tray_open: Mutex<Option<TrayItem>>,
 }
 
 impl AppState {
@@ -114,11 +70,25 @@ impl AppState {
             .take()
     }
 
-    fn route(&self, shortcut: &Shortcut) -> Option<Route> {
+    fn route(&self, shortcut: &Shortcut) -> Option<shortcuts::ShortcutAction> {
         self.routes
             .lock()
             .expect("shortcut routes lock")
             .route(shortcut)
+    }
+
+    fn route_for(&self, action: shortcuts::ShortcutAction) -> Option<Shortcut> {
+        self.routes
+            .lock()
+            .expect("shortcut routes lock")
+            .get(action)
+    }
+
+    fn set_route(&self, action: shortcuts::ShortcutAction, shortcut: Option<Shortcut>) {
+        self.routes
+            .lock()
+            .expect("shortcut routes lock")
+            .set(action, shortcut);
     }
 }
 
@@ -629,26 +599,26 @@ fn show_read_aloud_failure(app: &AppHandle, error: &EngineError) {
         .show(|_| {});
 }
 
-/// Register one binding and answer the shortcut that is now live, or `None` when
-/// the binding is invalid or another app owns it. A conflict is reported rather
-/// than silently dropped (ticket 10 surfaces it in the settings UI).
-fn register_shortcut(app: &AppHandle, binding: &str) -> Option<Shortcut> {
-    match binding.parse::<Shortcut>() {
-        Ok(shortcut) => match app.global_shortcut().register(shortcut) {
-            Ok(()) => Some(shortcut),
-            Err(error) => {
-                eprintln!("Translator: could not register {binding}: {error}");
-                None
-            }
-        },
-        Err(error) => {
-            eprintln!("Translator: invalid shortcut binding {binding}: {error}");
-            None
-        }
-    }
+/// Apply one shortcut change. The rules — invalid, already in use, no change,
+/// macOS refusing, the settings file refusing — live in `shortcuts.rs`; the
+/// command only carries the window's request and answers what happened.
+#[tauri::command]
+async fn rebind_shortcut(
+    app: AppHandle,
+    action: shortcuts::ShortcutAction,
+    binding: String,
+) -> Result<shortcuts::RebindResult, ()> {
+    shortcuts::rebind_shortcut(&app, action, &binding)
 }
 
-fn build_tray(app: &AppHandle, accelerator: &str) -> tauri::Result<()> {
+/// Put the shipped shortcuts and the default pair back. History and provider
+/// keys are not touched.
+#[tauri::command]
+async fn reset_shortcuts_and_language_pair(app: AppHandle) -> Result<shortcuts::ResetOutcome, ()> {
+    shortcuts::reset_shortcuts_and_language_pair(&app)
+}
+
+fn build_tray(app: &AppHandle, accelerator: &str) -> tauri::Result<TrayItem> {
     let open = MenuItem::with_id(
         app,
         "open",
@@ -672,7 +642,7 @@ fn build_tray(app: &AppHandle, accelerator: &str) -> tauri::Result<()> {
             _ => {}
         })
         .build(app)?;
-    Ok(())
+    Ok(open)
 }
 
 fn main() {
@@ -724,10 +694,14 @@ fn main() {
                         return;
                     }
                     match app.state::<AppState>().route(shortcut) {
-                        Some(Route::QuickTranslate) => open_quick_translate(app),
-                        Some(Route::Replace) => replace_selection_directly(app),
-                        Some(Route::TranslateWindow) => open_translate_window(app),
-                        Some(Route::ReadAloud) => read_aloud_selection(app),
+                        Some(shortcuts::ShortcutAction::QuickTranslate) => {
+                            open_quick_translate(app)
+                        }
+                        Some(shortcuts::ShortcutAction::Replace) => replace_selection_directly(app),
+                        Some(shortcuts::ShortcutAction::TranslateWindow) => {
+                            open_translate_window(app)
+                        }
+                        Some(shortcuts::ShortcutAction::ReadAloud) => read_aloud_selection(app),
                         None => {}
                     }
                 })
@@ -737,7 +711,8 @@ fn main() {
             engine: Arc::new(engine),
             prefill: Mutex::new(None),
             popup_prefill: Mutex::new(None),
-            routes: Mutex::new(ShortcutRoutes::default()),
+            routes: Mutex::new(shortcuts::ShortcutRoutes::default()),
+            tray_open: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             quick_translate,
@@ -760,31 +735,27 @@ fn main() {
             accessibility_granted,
             request_accessibility,
             open_accessibility_settings,
-            complete_onboarding
+            complete_onboarding,
+            rebind_shortcut,
+            reset_shortcuts_and_language_pair
         ])
         .setup(|app| {
             // Menu-bar only: the app never takes a Dock icon or a place in ⌘Tab.
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let settings = app.state::<AppState>().engine.settings();
-            let quick_translate_binding = settings
+            // A settings file that cannot be read still boots with the shipped
+            // shortcuts, so a broken file never leaves the app unreachable.
+            let bindings = settings
                 .as_ref()
-                .map(|settings| settings.shortcuts.quick_translate.clone())
-                .unwrap_or_else(|_| DEFAULT_QUICK_TRANSLATE_SHORTCUT.to_owned());
-            let replace_binding = settings
-                .as_ref()
-                .map(|settings| settings.shortcuts.replace.clone())
-                .unwrap_or_else(|_| DEFAULT_REPLACE_SHORTCUT.to_owned());
-            let translate_binding = settings
-                .as_ref()
-                .map(|settings| settings.shortcuts.translate_window.clone())
-                .unwrap_or_else(|_| DEFAULT_TRANSLATE_SHORTCUT.to_owned());
-            let read_aloud_binding = settings
-                .as_ref()
-                .map(|settings| settings.shortcuts.read_aloud.clone())
-                .unwrap_or_else(|_| DEFAULT_READ_ALOUD_SHORTCUT.to_owned());
+                .map(|settings| settings.shortcuts.clone())
+                .unwrap_or_default();
 
-            build_tray(app.handle(), &translate_binding)?;
+            let open = build_tray(app.handle(), &bindings.translate_window)?;
+            *app.state::<AppState>()
+                .tray_open
+                .lock()
+                .expect("tray item lock") = Some(open);
 
             // The popup window exists from startup (hidden) and is converted
             // once. Losing key is the dismissal gesture: clicking anywhere else
@@ -807,16 +778,15 @@ fn main() {
             // its own thread so the database can never slow the first shortcut.
             maintain_history(app.handle());
 
-            let routes = ShortcutRoutes {
-                quick_translate: register_shortcut(app.handle(), &quick_translate_binding),
-                replace: register_shortcut(app.handle(), &replace_binding),
-                translate_window: register_shortcut(app.handle(), &translate_binding),
-                read_aloud: register_shortcut(app.handle(), &read_aloud_binding),
-            };
+            let routes = shortcuts::ShortcutRoutes::default();
             *app.state::<AppState>()
                 .routes
                 .lock()
                 .expect("shortcut routes lock") = routes;
+            for action in shortcuts::ShortcutAction::ALL {
+                let live = shortcuts::register_binding(app.handle(), action.binding(&bindings));
+                app.state::<AppState>().set_route(action, live);
+            }
 
             // The onboarding is the first thing the app has to say, so the first
             // launch opens the Translate Window to say it.
@@ -833,51 +803,4 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Translator");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn shortcut(binding: &str) -> Shortcut {
-        binding.parse().expect("a valid shortcut binding")
-    }
-
-    #[test]
-    fn each_registered_shortcut_routes_to_its_own_action() {
-        let routes = ShortcutRoutes {
-            quick_translate: Some(shortcut("Ctrl+Alt+D")),
-            replace: Some(shortcut("Ctrl+Alt+R")),
-            translate_window: Some(shortcut("Ctrl+Alt+E")),
-            read_aloud: Some(shortcut("Ctrl+Alt+S")),
-        };
-
-        assert_eq!(
-            routes.route(&shortcut("Ctrl+Alt+D")),
-            Some(Route::QuickTranslate)
-        );
-        assert_eq!(routes.route(&shortcut("Ctrl+Alt+R")), Some(Route::Replace));
-        assert_eq!(
-            routes.route(&shortcut("Ctrl+Alt+E")),
-            Some(Route::TranslateWindow)
-        );
-        assert_eq!(
-            routes.route(&shortcut("Ctrl+Alt+S")),
-            Some(Route::ReadAloud)
-        );
-    }
-
-    #[test]
-    fn a_shortcut_that_did_not_register_routes_nowhere() {
-        let routes = ShortcutRoutes {
-            quick_translate: None,
-            replace: None,
-            translate_window: Some(shortcut("Ctrl+Alt+E")),
-            read_aloud: None,
-        };
-
-        assert_eq!(routes.route(&shortcut("Ctrl+Alt+S")), None);
-        assert_eq!(routes.route(&shortcut("Ctrl+Alt+D")), None);
-        assert_eq!(routes.route(&shortcut("Ctrl+Alt+R")), None);
-    }
 }

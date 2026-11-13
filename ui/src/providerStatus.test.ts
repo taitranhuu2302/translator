@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { ProviderStatus, Settings } from "./ipc";
-import { azureStatusLine, groqStatusLine, regionChanged, withAzureRegion } from "./providerStatus";
+import {
+  azureStatusLine,
+  groqStatusLine,
+  myMemoryStatusLine,
+  regionChanged,
+  withAzureRegion,
+} from "./providerStatus";
 
 const status = (overrides: Partial<ProviderStatus> = {}): ProviderStatus => ({
   azure_configured: false,
@@ -71,6 +77,16 @@ describe("the Groq status line", () => {
 
     expect(line.toLowerCase()).toContain("skipped");
     expect(line.toLowerCase()).toContain("new key");
+  });
+});
+
+describe("the MyMemory status line", () => {
+  it("says MyMemory needs no key and is always available", () => {
+    const line = myMemoryStatusLine();
+
+    expect(line.toLowerCase()).toContain("no key");
+    expect(line).toContain("MyMemory");
+    expect(line.toLowerCase()).toContain("always available");
   });
 });
 

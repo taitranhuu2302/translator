@@ -747,6 +747,31 @@ fn onboarding_stays_unseen_until_it_is_completed_and_the_flag_persists() {
 }
 
 #[test]
+fn saving_settings_writes_the_pair_and_every_shortcut_and_reads_them_back() {
+    let harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+    let changed = Settings {
+        language_pair: LanguagePair::new(Language::vietnamese(), Language::english()),
+        shortcuts: translator_core::ShortcutBindings {
+            quick_translate: "Cmd+Shift+K".to_owned(),
+            replace: "Cmd+Shift+L".to_owned(),
+            read_aloud: "Cmd+Shift+J".to_owned(),
+            translate_window: "Cmd+Shift+O".to_owned(),
+        },
+        azure_region: "westeurope".to_owned(),
+        ..Settings::default()
+    };
+
+    harness
+        .engine()
+        .save_settings(changed.clone())
+        .expect("save settings");
+
+    assert_eq!(harness.settings.current(), changed);
+    assert_eq!(harness.engine().settings().expect("settings load"), changed);
+    assert_eq!(harness.settings.saves(), 1, "one write, not one per field");
+}
+
+#[test]
 fn improve_text_returns_the_two_labelled_parts() {
     let harness = Harness::new(
         FakeCapture::default(),

@@ -4,15 +4,17 @@ import { ipc, type ProviderStatus, type Settings } from "./ipc";
 import {
   azureStatusLine,
   groqStatusLine,
+  myMemoryStatusLine,
   regionChanged,
   withAzureRegion,
 } from "./providerStatus";
 
 /**
- * The minimal provider surface for ticket 06: whether Azure has a key, a place to
- * enter or clear it, the optional region, and whether the session skipped Azure.
- * Ticket 10 grows this into the full Settings view; keeping the rules in
- * `providerStatus.ts` means that move changes only layout.
+ * The provider rows of the Settings surface: whether Azure and Groq have a key
+ * (and whether this session skipped them), a place to enter or clear each key,
+ * the optional Azure region, and MyMemory — the keyless fallback that is always
+ * there. Saving or clearing a key returns the refreshed status, so a new key
+ * stops showing as skipped immediately.
  */
 export function ProviderSettings({
   settings,
@@ -244,6 +246,15 @@ export function ProviderSettings({
       </div>
 
       {groqNotice ? <p className="muted small">{groqNotice}</p> : null}
+
+      <hr className="provider-divider" />
+
+      <div className="provider-head">
+        <h2>MyMemory</h2>
+        <span className="badge ok">Always available</span>
+      </div>
+
+      <p className="muted small">{myMemoryStatusLine()}</p>
     </section>
   );
 }

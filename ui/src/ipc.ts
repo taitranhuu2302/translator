@@ -45,6 +45,36 @@ export interface Settings {
   onboarding_seen: boolean;
 }
 
+/** The four things a global shortcut can do. The spelling is the field name in
+ * `ShortcutBindings`, so the wire, the settings file and the view share a word. */
+export type ShortcutAction =
+  | "quick_translate"
+  | "replace"
+  | "read_aloud"
+  | "translate_window";
+
+/** What one rebind did. `problem: null` means it is live and saved; otherwise
+ * the stored binding is unchanged and the words say why. */
+export interface RebindResult {
+  binding: string;
+  problem: string | null;
+}
+
+/** One action's result after a reset. */
+export interface ShortcutStatus {
+  action: ShortcutAction;
+  binding: string;
+  problem: string | null;
+}
+
+/** What a reset leaves behind. `save_problem` is set when the live shortcuts
+ * changed but the settings file could not be written. */
+export interface ResetOutcome {
+  settings: Settings;
+  bindings: ShortcutStatus[];
+  save_problem: string | null;
+}
+
 /** The text the user selected when a shortcut fired. */
 export interface Selection {
   text: string;
@@ -225,6 +255,21 @@ export const ipc = {
   getSettings: (): Promise<Settings> => call("get_settings"),
   saveSettings: (settings: Settings): Promise<void> =>
     call("save_settings", { settings }),
+
+  /** Rebind one global shortcut. The engine decides: invalid, already used by
+   * another action, unchanged, macOS refused, or applied. Only an applied
+   * binding is live and saved. */
+  rebindShortcut: (
+    action: ShortcutAction,
+    binding: string,
+  ): Promise<RebindResult> =>
+    call("rebind_shortcut", { action, binding }),
+
+  /** Put the shipped shortcuts and the default pair back. History and keys are
+   * untouched, and each shipped binding reports whether macOS accepted it. */
+  resetShortcutsAndLanguagePair: (): Promise<ResetOutcome> =>
+    call("reset_shortcuts_and_language_pair"),
+
   searchHistory: (query: string, limit: number): Promise<HistoryEntry[]> =>
     call("search_history", { query, limit }),
 

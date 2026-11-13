@@ -643,3 +643,109 @@ button.primary {
   color: GrayText;
   font-size: 12px;
 }
+
+/* --- Settings ------------------------------------------------------------- */
+
+/* The settings column scrolls as a whole: its sections are read in order. */
+.settings-pane {
+  gap: 0;
+  overflow-y: auto;
+}
+
+.settings-section {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--edge);
+}
+
+/* The provider component already sits inside a settings section. */
+.settings-section .provider-settings {
+  padding: 0;
+}
+
+.settings-section:first-of-type {
+  border-top: 0;
+  padding-top: 4px;
+}
+
+.settings-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: GrayText;
+}
+
+.settings-select {
+  max-width: 220px;
+  padding: 5px 8px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: Canvas;
+  color: CanvasText;
+  font: inherit;
+  font-size: 12px;
+}
+
+.settings-select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+/* Each shortcut is one row: name and purpose, the combination, and Change. */
+.binding-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 4px 10px;
+  align-items: center;
+  padding: 8px 0;
+}
+
+.binding-row + .binding-row {
+  border-top: 1px solid var(--edge);
+}
+
+.binding-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.binding-row kbd {
+  min-width: 96px;
+  padding: 4px 6px;
+  text-align: center;
+}
+
+.binding-capture {
+  min-width: 96px;
+  padding: 4px 6px;
+  border: 1px dashed var(--accent);
+  border-radius: 5px;
+  color: var(--accent);
+  font-size: 11px;
+  text-align: center;
+}
+
+.binding-problem {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.reset-problems {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}

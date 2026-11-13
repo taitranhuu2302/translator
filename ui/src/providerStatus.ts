@@ -27,6 +27,11 @@ export function groqStatusLine(status: ProviderStatus): string {
   return "No key yet. Improve needs a Groq key; translation works without one.";
 }
 
+/** MyMemory is the keyless fallback, so its row only ever says it is there. */
+export function myMemoryStatusLine(): string {
+  return "No key needed — MyMemory is always available, and translates when Azure is missing or skipped.";
+}
+
 /** The region is stored trimmed: whitespace must not become a header value. */
 export function withAzureRegion(settings: Settings, region: string): Settings {
   return { ...settings, azure_region: region.trim() };

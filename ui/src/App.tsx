@@ -28,7 +28,7 @@ import {
   type Settings,
 } from "./ipc";
 import { Onboarding } from "./Onboarding";
-import { ProviderSettings } from "./ProviderSettings";
+import { SettingsPane } from "./SettingsPane";
 import {
   EMPTY_RESULT,
   reduceResult,
@@ -40,9 +40,17 @@ const FALLBACK_SHORTCUT = "Ctrl+Alt+E";
 
 const IMPROVE_PARTS: ImprovePart[] = ["corrected", "better"];
 
-/** The window's three surfaces. Translate and Improve share the two panes and
- * only change their labels; History replaces them with the stored entries. */
-type Surface = Mode | "history";
+/** The window's four surfaces. Translate and Improve share the two panes and
+ * only change their labels; History replaces them with the stored entries, and
+ * Settings with the local preferences. */
+type Surface = Mode | "history" | "settings";
+
+const SURFACES: { id: Surface; label: string }[] = [
+  { id: "translate", label: "Translate" },
+  { id: "improve", label: "Improve" },
+  { id: "history", label: "History" },
+  { id: "settings", label: "Settings" },
+];
 
 /** How many recent entries the History surface loads. It is a cap, not a page
  * size: v1 shows recent history, and the search narrows what was loaded. */
@@ -202,10 +210,16 @@ export function App() {
   // Switching between the two working modes keeps an in-flight stream alive in
   // its own pane: the two results are separate states, so a hidden answer can
   // never land in the pane of the other mode. Opening History re-reads it first.
+  // Settings leaves the working surface exactly as it was, so a trip to Settings
+  // and back changes neither pane.
   const selectSurface = (next: Surface) => {
     if (next === "history") {
       setSurface("history");
       loadHistory();
+      return;
+    }
+    if (next === "settings") {
+      setSurface("settings");
       return;
     }
     if (next === mode && surface === next) return;
@@ -472,19 +486,15 @@ export function App() {
       ) : null}
 
       <div className="mode-switch" role="tablist" aria-label="View">
-        {(["translate", "improve", "history"] as Surface[]).map((option) => (
+        {SURFACES.map(({ id, label }) => (
           <button
-            key={option}
+            key={id}
             role="tab"
-            aria-selected={surface === option}
-            className={surface === option ? "tab active" : "tab"}
-            onClick={() => selectSurface(option)}
+            aria-selected={surface === id}
+            className={surface === id ? "tab active" : "tab"}
+            onClick={() => selectSurface(id)}
           >
-            {option === "translate"
-              ? "Translate"
-              : option === "improve"
-                ? "Improve"
-                : "History"}
+            {label}
           </button>
         ))}
       </div>
@@ -499,6 +509,20 @@ export function App() {
             void openHistoryEntry(entry);
           }}
         />
+      ) : surface === "settings" ? (
+        settings ? (
+          <SettingsPane settings={settings} onSettingsSaved={setSettings} />
+        ) : (
+          <div className="panes single">
+            <section className="pane">
+              <p className="empty">
+                {settingsError
+                  ? "Settings could not be loaded."
+                  : "Loading settings…"}
+              </p>
+            </section>
+          </div>
+        )
       ) : (
       <div className="panes">
         <section className="pane">
@@ -628,13 +652,6 @@ export function App() {
         </section>
       </div>
       )}
-
-      {settings ? (
-        <details className="provider-details">
-          <summary>Provider keys</summary>
-          <ProviderSettings settings={settings} onSettingsSaved={setSettings} />
-        </details>
-      ) : null}
 
       {settings && !settings.onboarding_seen ? (
         <Onboarding
