@@ -696,6 +696,19 @@ button.primary {
   outline: none;
 }
 
+/* The Startup checkbox keeps the platform control; only its label joins it. */
+.login-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+}
+
+.login-toggle input {
+  width: auto;
+  margin: 0;
+}
+
 /* Each shortcut is one row: name and purpose, the combination, and Change. */
 .binding-row {
   display: grid;
@@ -748,4 +761,20 @@ button.danger {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* Launch refusals sit above the shortcut rows they belong to. */
+.launch-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--edge);
+  border-left: 3px solid var(--warning);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.launch-warning > p {
+  color: var(--warning);
 }

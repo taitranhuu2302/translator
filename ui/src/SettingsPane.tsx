@@ -17,6 +17,10 @@ import {
 } from "./settingsView";
 import { captureBinding, withShortcut, type KeyPress } from "./shortcuts";
 
+/** What a rebind says when the shell could not carry it out at all, rather
+ * than the engine answering with its own typed refusal. */
+const REBIND_FAILED = "The shortcut could not be changed.";
+
 /** The four actions, named the way the engine names them in its messages. */
 const ACTIONS: { action: ShortcutAction; label: string; description: string }[] =
   [
@@ -64,6 +68,64 @@ export function SettingsPane({
   const [resetProblems, setResetProblems] = useState<string[]>([]);
   const [confirmReset, setConfirmReset] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loginEnabled, setLoginEnabled] = useState<boolean | null>(null);
+  const [loginProblem, setLoginProblem] = useState<string | null>(null);
+  const [launchConflicts, setLaunchConflicts] = useState<ShortcutStatus[]>([]);
+
+  // The shortcuts macOS refused at launch are not a per-row problem until the
+  // user tries that row; they are fetched once so the first painted list says
+  // which actions are not working.
+  const loadConflicts = useCallback(async () => {
+    try {
+      setLaunchConflicts(await ipc.shortcutConflicts());
+    } catch {
+      // The launch check could not be read; the rows still work as they are.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadConflicts();
+  }, [loadConflicts]);
+
+  // The checkbox shows what macOS actually has, not what the settings file
+  // remembers: a login item the user removed by hand must not read as on.
+  useEffect(() => {
+    let cancelled = false;
+    ipc
+      .startAtLoginEnabled()
+      .then((enabled) => {
+        if (!cancelled) setLoginEnabled(enabled);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoginProblem("The login item state could not be read.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const saveStartAtLogin = async (enabled: boolean) => {
+    setBusy(true);
+    setLoginProblem(null);
+    try {
+      const outcome = await ipc.setStartAtLogin(enabled);
+      setLoginEnabled(outcome.enabled);
+      onSettingsSaved(outcome.settings);
+      if (outcome.problem) setLoginProblem(outcome.problem);
+    } catch {
+      setLoginProblem("The login item could not be changed.");
+      // The command refused outright; ask again rather than assume a state.
+      try {
+        setLoginEnabled(await ipc.startAtLoginEnabled());
+      } catch {
+        // The actual state stays unknown; the checkbox keeps its last value.
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const applyRebind = useCallback(
     async (action: ShortcutAction, binding: string) => {
@@ -74,7 +136,7 @@ export function SettingsPane({
         if (result.problem) {
           setProblems((current) => ({
             ...current,
-            [action]: result.problem ?? "The shortcut could not be changed.",
+            [action]: result.problem ?? REBIND_FAILED,
           }));
         } else {
           // Only a binding that is both live and saved enters the view: what is
@@ -84,12 +146,17 @@ export function SettingsPane({
             delete next[action];
             return next;
           });
+          // The shell drops this action's launch refusal when the rebind is
+          // saved; mirror that instead of re-showing a refusal that is gone.
+          setLaunchConflicts((current) =>
+            current.filter((status) => status.action !== action),
+          );
           onSettingsSaved(withShortcut(settings, action, result.binding));
         }
       } catch {
         setProblems((current) => ({
           ...current,
-          [action]: "The shortcut could not be changed.",
+          [action]: REBIND_FAILED,
         }));
       } finally {
         setBusy(false);
@@ -158,8 +225,15 @@ export function SettingsPane({
       setResetNotice("The shipped settings could not be restored.");
     } finally {
       setBusy(false);
+      // A reset clears every launch refusal; read the list back rather than
+      // assuming it, because the command may have failed before clearing.
+      void loadConflicts();
     }
   };
+
+  const problemConflicts = launchConflicts.filter(
+    (status) => status.problem !== null,
+  );
 
   return (
     <div className="panes single">
@@ -204,7 +278,42 @@ export function SettingsPane({
         </section>
 
         <section className="settings-section">
+          <h3 className="settings-title">Startup</h3>
+          <label className="login-toggle">
+            <input
+              type="checkbox"
+              checked={loginEnabled ?? false}
+              disabled={busy || loginEnabled === null}
+              onChange={(event) => {
+                void saveStartAtLogin(event.target.checked);
+              }}
+            />
+            <span>Start Translator at login</span>
+          </label>
+          {loginProblem ? (
+            <p className="error small" role="alert">
+              {loginProblem}
+            </p>
+          ) : null}
+        </section>
+
+        <section className="settings-section">
           <h3 className="settings-title">Shortcuts</h3>
+          {problemConflicts.length > 0 ? (
+            <div className="launch-warning" role="status">
+              <p className="small">
+                These shortcuts were not live when Translator started:
+              </p>
+              <ul className="reset-problems">
+                {problemConflicts.map((status) => (
+                  <li className="error small" key={status.action}>
+                    <strong>{actionLabel(status.action)}</strong> (
+                    {formatShortcut(status.binding)}): {status.problem}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           <p className="muted small">
             Choose one, then press the combination you want. At least one of Ctrl,
             Alt, Cmd or Shift is required.
@@ -289,4 +398,9 @@ function refusals(bindings: ShortcutStatus[]): string[] {
   return bindings
     .filter((status) => status.problem !== null)
     .map((status) => status.problem ?? "");
+}
+
+/** The name the Settings rows and the launch warning share for an action. */
+function actionLabel(action: ShortcutAction): string {
+  return ACTIONS.find((entry) => entry.action === action)?.label ?? action;
 }

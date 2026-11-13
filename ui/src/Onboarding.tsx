@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { formatShortcut } from "./format";
-import type { ShortcutBindings } from "./ipc";
+import { ipc, type ShortcutBindings } from "./ipc";
 
 const SHORTCUTS: { key: keyof ShortcutBindings; name: string; action: string }[] = [
   {
@@ -35,6 +35,8 @@ export function Onboarding({
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [granted, setGranted] = useState(false);
+  const [grantProblem, setGrantProblem] = useState<string | null>(null);
 
   const finish = async () => {
     setSaving(true);
@@ -44,6 +46,27 @@ export function Onboarding({
     } catch {
       setError("The onboarding could not be saved. Try again.");
       setSaving(false);
+    }
+  };
+
+  // Asking macOS shows its own prompt; the answer is read back once, after the
+  // prompt, so the surface never claims a permission it has not observed.
+  const grantAccessibility = async () => {
+    setGrantProblem(null);
+    try {
+      await ipc.requestAccessibility();
+      setGranted(await ipc.accessibilityGranted());
+    } catch {
+      setGrantProblem("The Accessibility permission could not be checked.");
+    }
+  };
+
+  const openPrivacySettings = async () => {
+    setGrantProblem(null);
+    try {
+      await ipc.openAccessibilitySettings();
+    } catch {
+      setGrantProblem("System Settings could not be opened.");
     }
   };
 
@@ -78,6 +101,30 @@ export function Onboarding({
           the first time a shortcut fires; you can also grant it now from
           System Settings → Privacy &amp; Security → Accessibility.
         </p>
+
+        {granted ? (
+          <p className="small" role="status">
+            Accessibility is granted.
+          </p>
+        ) : (
+          <div className="actions">
+            <button
+              onClick={() => {
+                void grantAccessibility();
+              }}
+            >
+              Grant Accessibility…
+            </button>
+            <button
+              onClick={() => {
+                void openPrivacySettings();
+              }}
+            >
+              Open Privacy Settings
+            </button>
+          </div>
+        )}
+        {grantProblem ? <p className="error small">{grantProblem}</p> : null}
 
         {error ? <p className="error">{error}</p> : null}
 

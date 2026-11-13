@@ -75,6 +75,15 @@ export interface ResetOutcome {
   save_problem: string | null;
 }
 
+/** What changing the login item left behind. `enabled` is the actual state
+ * macOS reports, `settings` what the engine now holds, and `problem` a sentence
+ * when the change could not be made or saved. */
+export interface StartAtLoginOutcome {
+  enabled: boolean;
+  settings: Settings;
+  problem: string | null;
+}
+
 /** The text the user selected when a shortcut fired. */
 export interface Selection {
   text: string;
@@ -270,6 +279,19 @@ export const ipc = {
   resetShortcutsAndLanguagePair: (): Promise<ResetOutcome> =>
     call("reset_shortcuts_and_language_pair"),
 
+  /** The shortcuts macOS refused when Translator started. Each stays until that
+   * action is rebound or the shortcuts are reset. */
+  shortcutConflicts: (): Promise<ShortcutStatus[]> =>
+    call("shortcut_conflicts"),
+
+  /** The actual login-item state macOS reports, never the saved preference. */
+  startAtLoginEnabled: (): Promise<boolean> => call("start_at_login_enabled"),
+
+  /** Enable or disable starting at login and save the preference. The answer
+   * carries the state macOS ended up in and a sentence when it did not stick. */
+  setStartAtLogin: (enabled: boolean): Promise<StartAtLoginOutcome> =>
+    call("set_start_at_login", { enabled }),
+
   searchHistory: (query: string, limit: number): Promise<HistoryEntry[]> =>
     call("search_history", { query, limit }),
 
@@ -329,15 +351,10 @@ export interface TranslationError {
   error: EngineError;
 }
 
-export interface ProviderStatusEvent {
-  status: ProviderStatus;
-}
-
 export const EVENTS = {
   translationChunk: "translation-chunk",
   translationDone: "translation-done",
   translationError: "translation-error",
-  providerStatus: "provider-status",
   selectionPrefill: "selection-prefill",
   popupPrefill: "popup-prefill",
 } as const;
@@ -374,14 +391,6 @@ export function onTranslationError(
   handler: (payload: TranslationError) => void,
 ): Promise<UnlistenFn> {
   return listen<TranslationError>(EVENTS.translationError, (event) =>
-    handler(event.payload),
-  );
-}
-
-export function onProviderStatus(
-  handler: (payload: ProviderStatusEvent) => void,
-): Promise<UnlistenFn> {
-  return listen<ProviderStatusEvent>(EVENTS.providerStatus, (event) =>
     handler(event.payload),
   );
 }
