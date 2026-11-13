@@ -5,7 +5,6 @@
 //! the rules live here so they are testable without a window, a Carbon hotkey or
 //! a settings file.
 
-use std::sync::mpsc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -13,7 +12,12 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 use translator_core::{LanguagePair, Settings, ShortcutBindings};
 
-use crate::AppState;
+use crate::main_thread::on_main_thread;
+use crate::{tray, AppState};
+
+/// Shortcut registrations and menu swaps are AppKit work posted to the main
+/// thread; the caller waits this long for the answer before reporting failure.
+const MAIN_THREAD_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// What a combination that cannot be used says. It never guesses why.
 pub const INVALID_BINDING: &str = "That combination cannot be used as a shortcut.";
@@ -171,6 +175,24 @@ pub fn problem_message(plan: &Plan) -> Option<String> {
 /// Carbon reports the conflict but not which app holds the combination.
 pub fn refused_message(binding: &str) -> String {
     format!("macOS would not give Translator {binding}. Another app may already be using it.")
+}
+
+/// Why a stored binding was not live at launch: the parser refused the stored
+/// spelling, or macOS refused the combination. It is the sentence Settings shows
+/// until that action is rebound or the shortcuts are reset.
+pub fn launch_problem(binding: &str) -> String {
+    if binding.parse::<Shortcut>().is_err() {
+        INVALID_BINDING.to_owned()
+    } else {
+        refused_message(binding)
+    }
+}
+
+/// Drop one action's launch refusal once that action has been rebound and
+/// saved. The list only ever describes what the current settings would still
+/// refuse at the next launch.
+pub fn forget_conflict(conflicts: &mut Vec<ShortcutStatus>, action: ShortcutAction) {
+    conflicts.retain(|status| status.action != action);
 }
 
 /// A binding as it is stored and shown: `Cmd+Ctrl+Alt+Shift+<key>`, with the key
@@ -339,6 +361,7 @@ pub fn rebind_shortcut(
     state.set_route(action, Some(shortcut));
 
     action.with_binding(&mut settings.shortcuts, binding.clone());
+    let shortcuts = settings.shortcuts.clone();
     if state.engine.save_settings(settings).is_err() {
         unregister_on_main_thread(app, shortcut);
         let restored = match previous {
@@ -352,9 +375,8 @@ pub fn rebind_shortcut(
         });
     }
 
-    if action == ShortcutAction::TranslateWindow {
-        set_tray_accelerator(app, Some(binding.clone()));
-    }
+    state.forget_conflict(action);
+    tray::refresh_tray(app, &shortcuts);
     Ok(RebindResult {
         binding,
         problem: None,
@@ -428,13 +450,8 @@ pub fn reset_shortcuts_and_language_pair(app: &AppHandle) -> Result<ResetOutcome
         });
     }
 
-    let open = bindings
-        .iter()
-        .find(|status| status.action == ShortcutAction::TranslateWindow);
-    set_tray_accelerator(
-        app,
-        open.and_then(|status| status.problem.is_none().then(|| status.binding.clone())),
-    );
+    state.clear_conflicts();
+    tray::refresh_tray(app, &defaults);
 
     let settings = settings_after_reset(&current);
     let save_problem = state
@@ -455,33 +472,11 @@ pub fn reset_shortcuts_and_language_pair(app: &AppHandle) -> Result<ResetOutcome
     })
 }
 
-/// Keep the tray's “Open Translate Window” accelerator in step with the live
-/// binding. The tray is built in `main.rs`; this module only updates it. The
-/// item is an AppKit object, so the update is posted to the main thread like the
-/// registrations are.
-pub fn set_tray_accelerator(app: &AppHandle, binding: Option<String>) {
-    let outcome = on_main_thread(app, move |handle| {
-        let state = handle.state::<AppState>();
-        let item = state.tray_open.lock().expect("tray item lock");
-        let Some(item) = item.as_ref() else {
-            return;
-        };
-        if let Err(error) = item.set_accelerator(binding.as_deref()) {
-            eprintln!("Translator: the tray shortcut label was not updated: {error}");
-        }
-    });
-    if outcome.is_none() {
-        eprintln!(
-            "Translator: the tray shortcut label was not updated: the main thread did not answer"
-        );
-    }
-}
-
 /// Register on the main thread and wait for the answer: Carbon registration
 /// belongs there, and the caller must know whether it succeeded before it
 /// unregisters what the new combination replaces.
 fn register_on_main_thread(app: &AppHandle, shortcut: Shortcut) -> Result<(), String> {
-    match on_main_thread(app, move |handle| {
+    match on_main_thread(app, MAIN_THREAD_TIMEOUT, move |handle| {
         handle
             .global_shortcut()
             .register(shortcut)
@@ -493,7 +488,7 @@ fn register_on_main_thread(app: &AppHandle, shortcut: Shortcut) -> Result<(), St
 }
 
 fn unregister_on_main_thread(app: &AppHandle, shortcut: Shortcut) {
-    let outcome = on_main_thread(app, move |handle| {
+    let outcome = on_main_thread(app, MAIN_THREAD_TIMEOUT, move |handle| {
         handle
             .global_shortcut()
             .unregister(shortcut)
@@ -508,22 +503,6 @@ fn unregister_on_main_thread(app: &AppHandle, shortcut: Shortcut) {
             eprintln!("Translator: {shortcut} was not unregistered: the main thread did not answer")
         }
     }
-}
-
-/// Run `operation` on the main thread and wait for its answer. The wait is
-/// bounded so a shell that cannot reach the main thread reports a failure
-/// instead of hanging the Settings surface.
-fn on_main_thread<R: Send + 'static>(
-    app: &AppHandle,
-    operation: impl FnOnce(&AppHandle) -> R + Send + 'static,
-) -> Option<R> {
-    let (finished, wait) = mpsc::channel();
-    let handle = app.clone();
-    app.run_on_main_thread(move || {
-        let _ = finished.send(operation(&handle));
-    })
-    .ok()?;
-    wait.recv_timeout(Duration::from_secs(2)).ok()
 }
 
 #[cfg(test)]
@@ -758,6 +737,38 @@ mod tests {
             routes.route(&parse("Ctrl+Alt+E")),
             Some(ShortcutAction::TranslateWindow)
         );
+    }
+
+    #[test]
+    fn a_binding_that_was_not_live_at_launch_says_which_kind_of_refusal_it_was() {
+        // A stored spelling the parser cannot read is not macOS's refusal.
+        assert_eq!(launch_problem("Ctrl+Alt+Banana"), INVALID_BINDING);
+        assert_eq!(
+            launch_problem("Cmd+Shift+K"),
+            "macOS would not give Translator Cmd+Shift+K. Another app may already be using it."
+        );
+    }
+
+    #[test]
+    fn a_conflict_disappears_once_its_action_is_rebound_and_the_others_stay() {
+        let mut conflicts = vec![
+            ShortcutStatus {
+                action: ShortcutAction::QuickTranslate,
+                binding: "Ctrl+Alt+D".to_owned(),
+                problem: Some(refused_message("Ctrl+Alt+D")),
+            },
+            ShortcutStatus {
+                action: ShortcutAction::ReadAloud,
+                binding: "Ctrl+Alt+S".to_owned(),
+                problem: Some(refused_message("Ctrl+Alt+S")),
+            },
+        ];
+
+        forget_conflict(&mut conflicts, ShortcutAction::QuickTranslate);
+
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].action, ShortcutAction::ReadAloud);
+        assert_eq!(conflicts[0].binding, "Ctrl+Alt+S");
     }
 
     #[test]

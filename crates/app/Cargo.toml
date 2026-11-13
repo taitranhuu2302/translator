@@ -20,4 +20,5 @@ serde_json = { workspace = true }
 translator-core = { workspace = true }
 translator-platform-macos = { workspace = true }
 tauri-plugin-dialog = "2"
+tauri-plugin-autostart = "2.7"
 tauri-nspanel = "2.1"

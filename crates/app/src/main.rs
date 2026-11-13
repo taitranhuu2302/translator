@@ -3,8 +3,10 @@
 //! implementation directly.
 
 mod frame;
+mod main_thread;
 mod panel;
 mod shortcuts;
+mod tray;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -12,16 +14,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use frame::{Frame, FrameStore, ScreenRect};
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use serde::Serialize;
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 use translator_core::{
     AzureProvider, CachedProvider, CaptureError, Direction, EngineError, GroqProvider,
     HistoryEntry, ImproveDelta, ImprovePart, Mode, MyMemoryProvider, PopupPrefill, ProviderId,
     ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud, Replacement, Selection, Settings,
-    SettingsStore, SpeechError, TextOutcome, Translation, TranslatorEngine, UreqHttpClient,
+    SettingsStore, ShortcutBindings, SpeechError, TextOutcome, Translation, TranslatorEngine,
+    UreqHttpClient,
 };
 use translator_platform_macos::{
     clipboard, MacCredentialStore, MacHistoryStore, MacSelectionCapture, MacSettingsStore,
@@ -31,8 +35,8 @@ use translator_platform_macos::{
 /// How many translations the in-memory cache remembers.
 const TRANSLATION_CACHE_SIZE: usize = 100;
 
-/// The tray item handle, named once so `AppState` can hold it.
-type TrayItem = MenuItem<tauri::Wry>;
+/// How long a panel operation waits for the main thread before giving up.
+const PANEL_TIMEOUT: Duration = Duration::from_secs(1);
 
 struct AppState {
     /// Shared so a command can hold it across an awaits-free worker hop while
@@ -45,9 +49,12 @@ struct AppState {
     /// The same idea for Quick Translate: captured before the popup is shown.
     popup_prefill: Mutex<Option<PopupPrefill>>,
     routes: Mutex<shortcuts::ShortcutRoutes>,
-    /// The tray's “Open Translate Window” item, kept so a rebind can update its
-    /// accelerator. The tray's menu cannot be read back from the tray itself.
-    tray_open: Mutex<Option<TrayItem>>,
+    /// The shortcuts macOS refused at launch, as sentences Settings shows until
+    /// that action is rebound or the shortcuts are reset.
+    launch_conflicts: Mutex<Vec<shortcuts::ShortcutStatus>>,
+    /// The Accessibility permission as last observed, so the tray is only
+    /// rebuilt when it actually changes rather than on every poll.
+    accessibility: Mutex<bool>,
 }
 
 impl AppState {
@@ -89,6 +96,30 @@ impl AppState {
             .lock()
             .expect("shortcut routes lock")
             .set(action, shortcut);
+    }
+
+    fn conflicts(&self) -> Vec<shortcuts::ShortcutStatus> {
+        self.launch_conflicts
+            .lock()
+            .expect("shortcut conflicts lock")
+            .clone()
+    }
+
+    fn forget_conflict(&self, action: shortcuts::ShortcutAction) {
+        shortcuts::forget_conflict(
+            &mut self
+                .launch_conflicts
+                .lock()
+                .expect("shortcut conflicts lock"),
+            action,
+        );
+    }
+
+    fn clear_conflicts(&self) {
+        self.launch_conflicts
+            .lock()
+            .expect("shortcut conflicts lock")
+            .clear();
     }
 }
 
@@ -154,12 +185,12 @@ async fn replace_with_translation(
 ) -> Result<Replacement, EngineError> {
     let engine = Arc::clone(&state.engine);
 
-    on_main_thread(&app, |handle| panel::hide(&handle));
+    main_thread::on_main_thread(&app, PANEL_TIMEOUT, panel::hide);
     match engine.replace_with_translation(&source_text, translation) {
         Ok(replacement) => Ok(replacement),
         Err(error) => {
-            on_main_thread(&app, move |handle| {
-                if let Err(show_error) = panel::show(&handle) {
+            main_thread::on_main_thread(&app, PANEL_TIMEOUT, move |handle| {
+                if let Err(show_error) = panel::show(handle) {
                     eprintln!(
                         "Translator: the popup could not be shown after a failed Replace: {show_error}"
                     );
@@ -311,20 +342,6 @@ async fn hide_popup(app: AppHandle) -> Result<(), ()> {
         .map_err(|_| ())
 }
 
-/// Run a panel operation on the main thread and wait for it. Replace needs to
-/// know the popup has given up the keyboard before it can synthesize a paste.
-fn on_main_thread(app: &AppHandle, operation: impl FnOnce(AppHandle) + Send + 'static) {
-    let (finished, wait) = std::sync::mpsc::channel();
-    let handle = app.clone();
-    let scheduled = app.run_on_main_thread(move || {
-        operation(handle);
-        let _ = finished.send(());
-    });
-    if scheduled.is_ok() {
-        let _ = wait.recv_timeout(std::time::Duration::from_secs(1));
-    }
-}
-
 /// The popup's Copy button. Writing through AppKit does not depend on the web
 /// view's clipboard permission.
 #[tauri::command]
@@ -332,9 +349,35 @@ async fn copy_text(text: String) -> Result<(), ()> {
     clipboard::write_text(&text).map_err(|_| ())
 }
 
+/// The Accessibility permission, as observed now. A change rebuilds the tray
+/// menu, whose accessibility row would otherwise go stale while the app runs.
 #[tauri::command]
-async fn accessibility_granted(state: State<'_, AppState>) -> Result<bool, ()> {
-    Ok(state.engine.accessibility_granted())
+async fn accessibility_granted(app: AppHandle, state: State<'_, AppState>) -> Result<bool, ()> {
+    let granted = state.engine.accessibility_granted();
+    let changed = {
+        let mut observed = state.accessibility.lock().expect("accessibility lock");
+        let changed = *observed != granted;
+        *observed = granted;
+        changed
+    };
+    if changed {
+        let bindings = state
+            .engine
+            .settings()
+            .map(|settings| settings.shortcuts)
+            .unwrap_or_default();
+        tray::refresh_tray(&app, &bindings);
+    }
+    Ok(granted)
+}
+
+/// The shortcuts macOS refused at launch. The Settings surface shows each one
+/// until a rebind of that action or a reset clears it.
+#[tauri::command]
+async fn shortcut_conflicts(
+    state: State<'_, AppState>,
+) -> Result<Vec<shortcuts::ShortcutStatus>, ()> {
+    Ok(state.conflicts())
 }
 
 #[tauri::command]
@@ -618,31 +661,148 @@ async fn reset_shortcuts_and_language_pair(app: AppHandle) -> Result<shortcuts::
     shortcuts::reset_shortcuts_and_language_pair(&app)
 }
 
-fn build_tray(app: &AppHandle, accelerator: &str) -> tauri::Result<TrayItem> {
-    let open = MenuItem::with_id(
-        app,
-        "open",
-        "Open Translate Window",
-        true,
-        Some(accelerator),
-    )?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Translator", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
+/// What changing the login item left behind. `enabled` is the plugin's actual
+/// state, `settings` what the engine now holds, and `problem` a sentence when
+/// the change could not be made or persisted. The command never fails with a
+/// bare `()`, so the surface can always show what is true.
+#[derive(Serialize)]
+struct StartAtLoginOutcome {
+    enabled: bool,
+    settings: Settings,
+    problem: Option<String>,
+}
+
+/// The login item's actual state, asked of the plugin rather than read from the
+/// settings file.
+#[tauri::command]
+fn start_at_login_enabled(app: AppHandle) -> Result<bool, ()> {
+    app.autolaunch().is_enabled().map_err(|error| {
+        eprintln!("Translator: the login item state could not be read: {error}");
+    })
+}
+
+/// Enable or disable the login item and save the preference. Loading the
+/// settings first means a file that cannot be read refuses the change before
+/// anything is touched. A failed write rolls the login item back, so what the
+/// file says and what macOS does never disagree after a relaunch.
+#[tauri::command]
+fn set_start_at_login(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<StartAtLoginOutcome, ()> {
+    let autolaunch = app.autolaunch();
+    let mut settings = match state.engine.settings() {
+        Ok(settings) => settings,
+        Err(error) => {
+            eprintln!("Translator: the login item was not changed: {error}");
+            return Ok(StartAtLoginOutcome {
+                enabled: autolaunch.is_enabled().unwrap_or(false),
+                settings: Settings::default(),
+                problem: Some(
+                    "The login item was not changed: the settings file could not be read."
+                        .to_owned(),
+                ),
+            });
+        }
+    };
+
+    let previous = settings.start_at_login;
+    let change = if enabled {
+        autolaunch.enable()
+    } else {
+        autolaunch.disable()
+    };
+    if let Err(error) = change {
+        eprintln!("Translator: the login item was not changed: {error}");
+        return Ok(StartAtLoginOutcome {
+            enabled: autolaunch.is_enabled().unwrap_or(settings.start_at_login),
+            settings,
+            problem: Some(
+                "Translator could not change the login item; it was left as it was.".to_owned(),
+            ),
+        });
+    }
+
+    settings.start_at_login = enabled;
+    if let Err(error) = state.engine.save_settings(settings.clone()) {
+        eprintln!("Translator: the login item change could not be saved: {error}");
+        // Put back whatever the file still says, which is the value loaded
+        // above, not simply the opposite of the requested one.
+        let reverted = if previous {
+            autolaunch.enable()
+        } else {
+            autolaunch.disable()
+        };
+        let problem = match reverted {
+            Ok(()) => {
+                "The login item was changed back because the settings file could not be written."
+                    .to_owned()
+            }
+            Err(revert_error) => format!(
+                "The settings file could not be written and the login item could not be changed back: {revert_error}"
+            ),
+        };
+        settings.start_at_login = previous;
+        return Ok(StartAtLoginOutcome {
+            enabled: autolaunch.is_enabled().unwrap_or(previous),
+            settings,
+            problem: Some(problem),
+        });
+    }
+
+    Ok(StartAtLoginOutcome {
+        enabled: autolaunch.is_enabled().unwrap_or(enabled),
+        settings,
+        problem: None,
+    })
+}
+
+/// Do what one shortcut action does, whether it arrived from a global shortcut
+/// press or from the tray menu.
+fn run_action(app: &AppHandle, action: shortcuts::ShortcutAction) {
+    match action {
+        shortcuts::ShortcutAction::QuickTranslate => open_quick_translate(app),
+        shortcuts::ShortcutAction::Replace => replace_selection_directly(app),
+        shortcuts::ShortcutAction::ReadAloud => read_aloud_selection(app),
+        shortcuts::ShortcutAction::TranslateWindow => open_translate_window(app),
+    }
+}
+
+/// A tray row was clicked. The four action rows fire the same handlers as the
+/// global shortcuts; the accessibility row opens the pane where the permission
+/// is granted; Quit exits.
+fn handle_tray_event(app: &AppHandle, id: &str) {
+    if let Some(action) = tray::action_for_id(id) {
+        run_action(app, action);
+        return;
+    }
+    match id {
+        tray::ACCESSIBILITY_NOT_GRANTED_ID => {
+            if let Err(error) = app.state::<AppState>().engine.open_accessibility_settings() {
+                eprintln!("Translator: Accessibility settings could not be opened: {error}");
+            }
+        }
+        tray::QUIT_ID => app.exit(0),
+        _ => {}
+    }
+}
+
+/// Build the menu bar item from the live bindings and the permission macOS
+/// reports now. Later changes go through `tray::refresh_tray`.
+fn build_tray(app: &AppHandle, bindings: &ShortcutBindings, granted: bool) -> tauri::Result<()> {
+    let menu = tray::menu(app, bindings, granted)?;
 
     // The 1024 px app icon is scaled to the menu bar by the tray implementation.
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
-    TrayIconBuilder::with_id("translator")
+    TrayIconBuilder::with_id(tray::TRAY_ID)
         .tooltip("Translator")
         .icon(icon)
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "open" => open_translate_window(app),
-            "quit" => app.exit(0),
-            _ => {}
-        })
+        .on_menu_event(|app, event| handle_tray_event(app, event.id().as_ref()))
         .build(app)?;
-    Ok(open)
+    Ok(())
 }
 
 fn main() {
@@ -686,6 +846,11 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent)
+                .build(),
+        )
         .plugin(tauri_nspanel::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -693,16 +858,8 @@ fn main() {
                     if event.state != ShortcutState::Pressed {
                         return;
                     }
-                    match app.state::<AppState>().route(shortcut) {
-                        Some(shortcuts::ShortcutAction::QuickTranslate) => {
-                            open_quick_translate(app)
-                        }
-                        Some(shortcuts::ShortcutAction::Replace) => replace_selection_directly(app),
-                        Some(shortcuts::ShortcutAction::TranslateWindow) => {
-                            open_translate_window(app)
-                        }
-                        Some(shortcuts::ShortcutAction::ReadAloud) => read_aloud_selection(app),
-                        None => {}
+                    if let Some(action) = app.state::<AppState>().route(shortcut) {
+                        run_action(app, action);
                     }
                 })
                 .build(),
@@ -712,7 +869,8 @@ fn main() {
             prefill: Mutex::new(None),
             popup_prefill: Mutex::new(None),
             routes: Mutex::new(shortcuts::ShortcutRoutes::default()),
-            tray_open: Mutex::new(None),
+            launch_conflicts: Mutex::new(Vec::new()),
+            accessibility: Mutex::new(false),
         })
         .invoke_handler(tauri::generate_handler![
             quick_translate,
@@ -737,7 +895,10 @@ fn main() {
             open_accessibility_settings,
             complete_onboarding,
             rebind_shortcut,
-            reset_shortcuts_and_language_pair
+            reset_shortcuts_and_language_pair,
+            shortcut_conflicts,
+            start_at_login_enabled,
+            set_start_at_login
         ])
         .setup(|app| {
             // Menu-bar only: the app never takes a Dock icon or a place in ⌘Tab.
@@ -751,11 +912,12 @@ fn main() {
                 .map(|settings| settings.shortcuts.clone())
                 .unwrap_or_default();
 
-            let open = build_tray(app.handle(), &bindings.translate_window)?;
+            let granted = app.state::<AppState>().engine.accessibility_granted();
+            build_tray(app.handle(), &bindings, granted)?;
             *app.state::<AppState>()
-                .tray_open
+                .accessibility
                 .lock()
-                .expect("tray item lock") = Some(open);
+                .expect("accessibility lock") = granted;
 
             // The popup window exists from startup (hidden) and is converted
             // once. Losing key is the dismissal gesture: clicking anywhere else
@@ -784,7 +946,19 @@ fn main() {
                 .lock()
                 .expect("shortcut routes lock") = routes;
             for action in shortcuts::ShortcutAction::ALL {
-                let live = shortcuts::register_binding(app.handle(), action.binding(&bindings));
+                let binding = action.binding(&bindings).to_owned();
+                let live = shortcuts::register_binding(app.handle(), &binding);
+                if live.is_none() {
+                    app.state::<AppState>()
+                        .launch_conflicts
+                        .lock()
+                        .expect("shortcut conflicts lock")
+                        .push(shortcuts::ShortcutStatus {
+                            action,
+                            problem: Some(shortcuts::launch_problem(&binding)),
+                            binding,
+                        });
+                }
                 app.state::<AppState>().set_route(action, live);
             }
 
