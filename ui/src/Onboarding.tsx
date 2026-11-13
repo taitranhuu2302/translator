@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { formatShortcut } from "./format";
 import { ipc, type ShortcutBindings } from "./ipc";
@@ -48,6 +48,23 @@ export function Onboarding({
       setSaving(false);
     }
   };
+
+  // The permission can outlive the settings file (a rebuild keeps the grant), so
+  // a fresh onboarding must not ask for something already granted.
+  useEffect(() => {
+    let cancelled = false;
+    ipc
+      .accessibilityGranted()
+      .then((isGranted) => {
+        if (!cancelled) setGranted(isGranted);
+      })
+      .catch(() => {
+        // Leave it unknown; both paths stay offered.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Asking macOS shows its own prompt; the answer is read back once, after the
   // prompt, so the surface never claims a permission it has not observed.

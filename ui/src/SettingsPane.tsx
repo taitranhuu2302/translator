@@ -112,7 +112,9 @@ export function SettingsPane({
     try {
       const outcome = await ipc.setStartAtLogin(enabled);
       setLoginEnabled(outcome.enabled);
-      onSettingsSaved(outcome.settings);
+      // A failed read answers with defaults that are not the user's settings;
+      // only a change that actually reached the file is safe to mirror here.
+      if (!outcome.problem) onSettingsSaved(outcome.settings);
       if (outcome.problem) setLoginProblem(outcome.problem);
     } catch {
       setLoginProblem("The login item could not be changed.");

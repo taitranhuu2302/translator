@@ -675,7 +675,7 @@ struct StartAtLoginOutcome {
 /// The login item's actual state, asked of the plugin rather than read from the
 /// settings file.
 #[tauri::command]
-fn start_at_login_enabled(app: AppHandle) -> Result<bool, ()> {
+async fn start_at_login_enabled(app: AppHandle) -> Result<bool, ()> {
     app.autolaunch().is_enabled().map_err(|error| {
         eprintln!("Translator: the login item state could not be read: {error}");
     })
@@ -686,7 +686,7 @@ fn start_at_login_enabled(app: AppHandle) -> Result<bool, ()> {
 /// anything is touched. A failed write rolls the login item back, so what the
 /// file says and what macOS does never disagree after a relaunch.
 #[tauri::command]
-fn set_start_at_login(
+async fn set_start_at_login(
     app: AppHandle,
     state: State<'_, AppState>,
     enabled: bool,
