@@ -13,6 +13,10 @@ pub fn read_selection() -> Result<Selection, CaptureError> {
     Err(unavailable())
 }
 
+pub fn replace_selection(_text: &str) -> Result<(), CaptureError> {
+    Err(unavailable())
+}
+
 pub fn accessibility_granted() -> bool {
     true
 }

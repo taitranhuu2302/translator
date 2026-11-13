@@ -12,9 +12,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use translator_core::{
-    CachedProvider, EngineError, HistoryEntry, Mode, MyMemoryProvider, PopupPrefill,
+    CachedProvider, CaptureError, EngineError, HistoryEntry, Mode, MyMemoryProvider, PopupPrefill,
     ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud, Replacement, Selection, Settings,
-    SpeechError, TextOutcome, TranslatorEngine, UreqHttpClient,
+    SpeechError, TextOutcome, Translation, TranslatorEngine, UreqHttpClient,
 };
 use translator_platform_macos::{
     clipboard, MacCredentialStore, MacHistoryStore, MacSelectionCapture, MacSettingsStore,
@@ -23,6 +23,7 @@ use translator_platform_macos::{
 
 /// Used when the settings file cannot be read, so the shortcuts still work.
 const DEFAULT_QUICK_TRANSLATE_SHORTCUT: &str = "Ctrl+Alt+D";
+const DEFAULT_REPLACE_SHORTCUT: &str = "Ctrl+Alt+R";
 const DEFAULT_TRANSLATE_SHORTCUT: &str = "Ctrl+Alt+E";
 const DEFAULT_READ_ALOUD_SHORTCUT: &str = "Ctrl+Alt+S";
 
@@ -34,6 +35,7 @@ const TRANSLATION_CACHE_SIZE: usize = 100;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Route {
     QuickTranslate,
+    Replace,
     TranslateWindow,
     ReadAloud,
 }
@@ -44,6 +46,7 @@ enum Route {
 #[derive(Clone, Copy, Default)]
 struct ShortcutRoutes {
     quick_translate: Option<Shortcut>,
+    replace: Option<Shortcut>,
     translate_window: Option<Shortcut>,
     read_aloud: Option<Shortcut>,
 }
@@ -54,6 +57,8 @@ impl ShortcutRoutes {
             Some(Route::ReadAloud)
         } else if is_the_same_binding(self.translate_window, shortcut) {
             Some(Route::TranslateWindow)
+        } else if is_the_same_binding(self.replace, shortcut) {
+            Some(Route::Replace)
         } else if is_the_same_binding(self.quick_translate, shortcut) {
             Some(Route::QuickTranslate)
         } else {
@@ -71,7 +76,9 @@ fn is_the_same_binding(registered: Option<Shortcut>, shortcut: &Shortcut) -> boo
 }
 
 struct AppState {
-    engine: TranslatorEngine,
+    /// Shared so a command can hold it across an awaits-free worker hop while
+    /// the borrow of `State` ends.
+    engine: Arc<TranslatorEngine>,
     /// The Selection captured when the window was opened, waiting for the UI to
     /// take it. Capture happens before the window is shown, while the app the
     /// user was typing in still has focus.
@@ -130,6 +137,37 @@ async fn replace_selection(state: State<'_, AppState>) -> Result<Replacement, En
     state.engine.replace_selection()
 }
 
+/// The popup's Enter: Replace the Selection with the translation already on
+/// screen, without capturing or translating again.
+///
+/// The panel holds the keyboard while it is shown, so the clipboard fallback's
+/// synthesized ⌘V would land in our own page. It is hidden first, and shown
+/// again if the write fails so the popup can explain the failure inline.
+#[tauri::command]
+async fn replace_with_translation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source_text: String,
+    translation: Translation,
+) -> Result<Replacement, EngineError> {
+    let engine = Arc::clone(&state.engine);
+
+    on_main_thread(&app, |handle| panel::hide(&handle));
+    match engine.replace_with_translation(&source_text, translation) {
+        Ok(replacement) => Ok(replacement),
+        Err(error) => {
+            on_main_thread(&app, move |handle| {
+                if let Err(show_error) = panel::show(&handle) {
+                    eprintln!(
+                        "Translator: the popup could not be shown after a failed Replace: {show_error}"
+                    );
+                }
+            });
+            Err(error)
+        }
+    }
+}
+
 #[tauri::command]
 async fn read_aloud(state: State<'_, AppState>) -> Result<ReadAloud, EngineError> {
     state.engine.read_aloud()
@@ -186,6 +224,20 @@ async fn hide_popup(app: AppHandle) -> Result<(), ()> {
     let handle = app.clone();
     app.run_on_main_thread(move || panel::hide(&handle))
         .map_err(|_| ())
+}
+
+/// Run a panel operation on the main thread and wait for it. Replace needs to
+/// know the popup has given up the keyboard before it can synthesize a paste.
+fn on_main_thread(app: &AppHandle, operation: impl FnOnce(AppHandle) + Send + 'static) {
+    let (finished, wait) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    let scheduled = app.run_on_main_thread(move || {
+        operation(handle);
+        let _ = finished.send(());
+    });
+    if scheduled.is_ok() {
+        let _ = wait.recv_timeout(std::time::Duration::from_secs(1));
+    }
 }
 
 /// The popup's Copy button. Writing through AppKit does not depend on the web
@@ -271,6 +323,48 @@ fn read_aloud_selection(app: &AppHandle) {
         Ok(_) => {}
         Err(error) => show_read_aloud_failure(&app, &error),
     });
+}
+
+/// Replace (`⌃⌥R`): capture, translate and write in one step, off the main
+/// thread so a slow provider never freezes the app. There is no popup to carry
+/// a failure, so every typed failure gets a dialog — a Replace that did nothing
+/// must never look like it worked.
+fn replace_selection_directly(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || match app.state::<AppState>().engine.replace_selection() {
+        Ok(_) => {}
+        Err(error) => show_replace_failure(&app, &error),
+    });
+}
+
+fn show_replace_failure(app: &AppHandle, error: &EngineError) {
+    eprintln!("Translator: Replace failed: {error}");
+    let message = match error {
+        EngineError::Capture(CaptureError::NoAccessibility) => {
+            "Translator needs Accessibility to replace your selection. Open System Settings → \
+             Privacy & Security → Accessibility, enable Translator, then try again."
+                .to_owned()
+        }
+        EngineError::Capture(CaptureError::SecureInput) => {
+            "This is a secure field, so nothing was replaced. Passwords stay on your Mac."
+                .to_owned()
+        }
+        EngineError::Capture(CaptureError::NothingSelected) => {
+            "Select some text first, then press the Replace shortcut again.".to_owned()
+        }
+        EngineError::Capture(CaptureError::NothingToReplace) => {
+            "There is no captured selection to replace. Select text and try again.".to_owned()
+        }
+        EngineError::Capture(CaptureError::NotWritable) => {
+            "This app does not accept a replacement. Your text was left unchanged.".to_owned()
+        }
+        other => other.to_string(),
+    };
+    app.dialog()
+        .message(message)
+        .title("Replace")
+        .kind(MessageDialogKind::Error)
+        .show(|_| {});
 }
 
 fn show_read_aloud_failure(app: &AppHandle, error: &EngineError) {
@@ -370,6 +464,7 @@ fn main() {
                     }
                     match app.state::<AppState>().route(shortcut) {
                         Some(Route::QuickTranslate) => open_quick_translate(app),
+                        Some(Route::Replace) => replace_selection_directly(app),
                         Some(Route::TranslateWindow) => open_translate_window(app),
                         Some(Route::ReadAloud) => read_aloud_selection(app),
                         None => {}
@@ -378,7 +473,7 @@ fn main() {
                 .build(),
         )
         .manage(AppState {
-            engine,
+            engine: Arc::new(engine),
             prefill: Mutex::new(None),
             popup_prefill: Mutex::new(None),
             routes: Mutex::new(ShortcutRoutes::default()),
@@ -386,6 +481,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             quick_translate,
             replace_selection,
+            replace_with_translation,
             read_aloud,
             translate_text,
             provider_status,
@@ -410,6 +506,10 @@ fn main() {
                 .as_ref()
                 .map(|settings| settings.shortcuts.quick_translate.clone())
                 .unwrap_or_else(|_| DEFAULT_QUICK_TRANSLATE_SHORTCUT.to_owned());
+            let replace_binding = settings
+                .as_ref()
+                .map(|settings| settings.shortcuts.replace.clone())
+                .unwrap_or_else(|_| DEFAULT_REPLACE_SHORTCUT.to_owned());
             let translate_binding = settings
                 .as_ref()
                 .map(|settings| settings.shortcuts.translate_window.clone())
@@ -436,6 +536,7 @@ fn main() {
 
             let routes = ShortcutRoutes {
                 quick_translate: register_shortcut(app.handle(), &quick_translate_binding),
+                replace: register_shortcut(app.handle(), &replace_binding),
                 translate_window: register_shortcut(app.handle(), &translate_binding),
                 read_aloud: register_shortcut(app.handle(), &read_aloud_binding),
             };
@@ -473,6 +574,7 @@ mod tests {
     fn each_registered_shortcut_routes_to_its_own_action() {
         let routes = ShortcutRoutes {
             quick_translate: Some(shortcut("Ctrl+Alt+D")),
+            replace: Some(shortcut("Ctrl+Alt+R")),
             translate_window: Some(shortcut("Ctrl+Alt+E")),
             read_aloud: Some(shortcut("Ctrl+Alt+S")),
         };
@@ -480,6 +582,10 @@ mod tests {
         assert_eq!(
             routes.route(&shortcut("Ctrl+Alt+D")),
             Some(Route::QuickTranslate)
+        );
+        assert_eq!(
+            routes.route(&shortcut("Ctrl+Alt+R")),
+            Some(Route::Replace)
         );
         assert_eq!(
             routes.route(&shortcut("Ctrl+Alt+E")),
@@ -495,11 +601,13 @@ mod tests {
     fn a_shortcut_that_did_not_register_routes_nowhere() {
         let routes = ShortcutRoutes {
             quick_translate: None,
+            replace: None,
             translate_window: Some(shortcut("Ctrl+Alt+E")),
             read_aloud: None,
         };
 
         assert_eq!(routes.route(&shortcut("Ctrl+Alt+S")), None);
         assert_eq!(routes.route(&shortcut("Ctrl+Alt+D")), None);
+        assert_eq!(routes.route(&shortcut("Ctrl+Alt+R")), None);
     }
 }

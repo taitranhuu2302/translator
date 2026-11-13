@@ -124,6 +124,12 @@ impl SelectionCapture for FakeCapture {
 
     fn replace_selection(&self, text: &str) -> Result<(), CaptureError> {
         let mut state = self.state.lock().unwrap();
+        // The fake retains the Selection its read returned, the way the real
+        // port retains the Accessibility target. With nothing retained there is
+        // nowhere to write, and it says so instead of pretending it replaced.
+        if state.selection.is_none() {
+            return Err(CaptureError::NothingToReplace);
+        }
         if let Some(error) = &state.write_error {
             return Err(error.clone());
         }

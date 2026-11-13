@@ -35,10 +35,8 @@ impl SelectionCapture for MacSelectionCapture {
         capture::read_selection()
     }
 
-    fn replace_selection(&self, _text: &str) -> Result<(), CaptureError> {
-        Err(CaptureError::Unavailable {
-            reason: "Replace lands in ticket 05".to_owned(),
-        })
+    fn replace_selection(&self, text: &str) -> Result<(), CaptureError> {
+        capture::replace_selection(text)
     }
 
     fn accessibility_granted(&self) -> bool {

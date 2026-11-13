@@ -27,6 +27,12 @@ export type PopupState =
   | { phase: "opening" }
   | { phase: "translating"; source: string }
   | { phase: "translated"; source: string; translation: Translation }
+  | { phase: "replacing"; source: string; translation: Translation }
+  | ({
+      phase: "replace_failed";
+      source: string;
+      translation: Translation;
+    } & PopupFailure)
   | { phase: "nothing_selected" }
   | ({ phase: "failed" } & PopupFailure)
   | { phase: "dismissed" };
@@ -35,6 +41,8 @@ export type PopupEvent =
   | { type: "prefill"; prefill: PopupPrefill }
   | { type: "translated"; translation: Translation }
   | { type: "failed"; error: EngineError }
+  | { type: "replace_requested" }
+  | { type: "replace_failed"; error: EngineError }
   | { type: "dismissed" };
 
 export const OPENING: PopupState = { phase: "opening" };
@@ -73,6 +81,28 @@ export function reduce(state: PopupState, event: PopupEvent): PopupState {
         return state;
       }
       return failedWith(formatFailure(event.error));
+
+    // Enter commits the translation that is on screen. There is no second
+    // translation and no re-read of the Selection: the user gets exactly the
+    // text they are looking at.
+    case "replace_requested":
+      if (state.phase !== "translated") {
+        return state;
+      }
+      return { phase: "replacing", source: state.source, translation: state.translation };
+
+    // A refused Replace leaves the popup open with the reason inline, and the
+    // same translation still available to Copy.
+    case "replace_failed":
+      if (state.phase !== "replacing") {
+        return state;
+      }
+      return {
+        phase: "replace_failed",
+        source: state.source,
+        translation: state.translation,
+        ...formatFailure(event.error),
+      };
   }
 }
 
@@ -117,6 +147,20 @@ export function formatCaptureFailure(capture: CaptureError): PopupFailure {
       kind: "capture",
       title: "Select something first.",
       detail: "Select text in any app, then press the Quick Translate shortcut.",
+    };
+  }
+  if (capture === "nothing_to_replace") {
+    return {
+      kind: "capture",
+      title: "There is no captured selection to replace.",
+      detail: "Select text in the app you were working in, then press the shortcut again.",
+    };
+  }
+  if (capture === "not_writable") {
+    return {
+      kind: "capture",
+      title: "This app did not accept the replacement.",
+      detail: "Your text was left unchanged. Copy the translation instead.",
     };
   }
   if (typeof capture === "object" && "unavailable" in capture) {

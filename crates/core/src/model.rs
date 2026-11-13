@@ -155,3 +155,35 @@ pub enum TextOutcome {
     Translation(Translation),
     Improvement(Improvement),
 }
+
+/// The length of `text` in UTF-16 code units: the unit `AXSelectedTextRange`
+/// and `NSString` count in. It is the right length for a text range after
+/// Replace — the UTF-8 byte count overshoots Vietnamese, and the scalar count
+/// undershoots anything outside the BMP.
+pub fn utf16_length(text: &str) -> usize {
+    text.encode_utf16().count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::utf16_length;
+
+    #[test]
+    fn utf16_length_counts_code_units_not_bytes_or_scalars() {
+        assert_eq!(utf16_length(""), 0);
+        assert_eq!(utf16_length("Hello"), 5);
+
+        // Vietnamese diacritics are single UTF-16 code units but two or three
+        // UTF-8 bytes, so the byte count is the wrong length for a text range.
+        let vietnamese = "Xin chào thế giới";
+        assert_eq!(utf16_length(vietnamese), vietnamese.chars().count());
+        assert!(utf16_length(vietnamese) < vietnamese.len());
+
+        // An emoji outside the BMP is one scalar but two UTF-16 code units, so
+        // the scalar count is wrong too. "👋" + " " + "Hello" = 2 + 1 + 5.
+        let emoji = "👋 Hello";
+        assert_eq!(utf16_length(emoji), 8);
+        assert_ne!(utf16_length(emoji), emoji.chars().count());
+        assert_ne!(utf16_length(emoji), emoji.len());
+    }
+}

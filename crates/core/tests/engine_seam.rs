@@ -11,7 +11,7 @@ use translator_core::testing::{
 use translator_core::{
     CachedProvider, CaptureError, EngineError, Improvement, Language, LanguagePair, Mode,
     PopupPrefill, ProviderId, ProviderTranslation, Selection, Settings, SpeechError, TextOutcome,
-    TranslateRequest, TranslatorEngine,
+    TranslateRequest, Translation, TranslatorEngine,
 };
 
 struct Harness {
@@ -205,6 +205,128 @@ fn replace_selection_writes_the_translation_over_the_selection() {
     assert_eq!(outcome.translation.text, "Hello");
     assert_eq!(harness.capture.writes(), vec!["Hello".to_owned()]);
     assert_eq!(harness.history.entries().len(), 1);
+}
+
+#[test]
+fn the_popup_replace_writes_the_translation_the_user_saw_without_reading_again() {
+    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+    let translation = Translation {
+        text: "Hello".to_owned(),
+        provider: ProviderId::MyMemory,
+        detected_source: Some(Language::vietnamese()),
+        target: Language::english(),
+    };
+
+    let outcome = harness
+        .engine()
+        .replace_with_translation("Xin chào", translation.clone())
+        .expect("replace the translation the popup showed");
+
+    assert_eq!(outcome.source_text, "Xin chào");
+    assert_eq!(outcome.translation, translation);
+    assert_eq!(harness.capture.writes(), vec!["Hello".to_owned()]);
+    assert_eq!(
+        harness.capture.reads(),
+        0,
+        "the popup already holds the translation; Replace must not re-read the Selection"
+    );
+    assert!(
+        harness.provider.requests().is_empty(),
+        "the user must get exactly the text they saw, not a second translation"
+    );
+
+    let recorded = harness.history.entries();
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(recorded[0].source, "Xin chào");
+    assert_eq!(recorded[0].result, "Hello");
+}
+
+#[test]
+fn a_popup_replace_with_no_captured_selection_writes_nothing() {
+    let harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+    let translation = Translation {
+        text: "Hello".to_owned(),
+        provider: ProviderId::MyMemory,
+        detected_source: None,
+        target: Language::english(),
+    };
+
+    let error = harness
+        .engine()
+        .replace_with_translation("Xin chào", translation)
+        .unwrap_err();
+
+    assert_eq!(error, EngineError::Capture(CaptureError::NothingToReplace));
+    assert!(harness.capture.writes().is_empty());
+    assert!(harness.history.entries().is_empty());
+}
+
+#[test]
+fn a_popup_replace_that_the_app_refuses_is_typed_and_records_no_history() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào").failing_writes_with(CaptureError::NotWritable),
+        provider_saying("Hello"),
+    );
+    let translation = Translation {
+        text: "Hello".to_owned(),
+        provider: ProviderId::MyMemory,
+        detected_source: None,
+        target: Language::english(),
+    };
+
+    let error = harness
+        .engine()
+        .replace_with_translation("Xin chào", translation)
+        .unwrap_err();
+
+    assert_eq!(error, EngineError::Capture(CaptureError::NotWritable));
+    assert!(harness.capture.writes().is_empty());
+    assert!(harness.history.entries().is_empty());
+}
+
+#[test]
+fn secure_input_refuses_a_popup_replace_before_anything_is_written() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào").failing_writes_with(CaptureError::SecureInput),
+        provider_saying("Hello"),
+    );
+    let translation = Translation {
+        text: "Hello".to_owned(),
+        provider: ProviderId::MyMemory,
+        detected_source: None,
+        target: Language::english(),
+    };
+
+    let error = harness
+        .engine()
+        .replace_with_translation("Xin chào", translation)
+        .unwrap_err();
+
+    assert_eq!(error, EngineError::Capture(CaptureError::SecureInput));
+    assert!(harness.capture.writes().is_empty());
+    assert!(harness.history.entries().is_empty());
+}
+
+#[test]
+fn a_rejected_history_write_never_fails_a_replace() {
+    let harness = Harness::new(FakeCapture::with_selection("Xin chào"), provider_saying("Hello"));
+    let engine = TranslatorEngine::new(
+        Arc::new(harness.capture.clone()),
+        Arc::new(harness.provider.clone()),
+        Arc::new(harness.speech.clone()),
+        Arc::new(InMemoryHistory::failing_writes_with(
+            translator_core::HistoryError::Unavailable {
+                reason: "history storage lands in ticket 09".to_owned(),
+            },
+        )),
+        Arc::new(harness.settings.clone()),
+        Arc::new(harness.credentials.clone()),
+    );
+
+    let outcome = engine.replace_selection().expect("history is best-effort");
+
+    assert_eq!(outcome.translation.text, "Hello");
+    assert_eq!(harness.capture.writes(), vec!["Hello".to_owned()]);
 }
 
 #[test]

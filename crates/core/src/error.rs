@@ -14,6 +14,11 @@ pub enum CaptureError {
     SecureInput,
     #[error("nothing is selected")]
     NothingSelected,
+    /// A write was asked for when no readable target had been captured, so
+    /// there is nowhere to put the text. It is the guard against pasting into
+    /// whatever happens to be focused now instead of the captured Selection.
+    #[error("there is no captured Selection to replace")]
+    NothingToReplace,
     #[error("the focused app does not accept a replacement")]
     NotWritable,
     #[error("selection capture is unavailable: {reason}")]

@@ -25,7 +25,7 @@ pub use language::{guess_language, Direction, Language, LanguagePair};
 pub use model::{
     HistoryEntry, Improvement, Mode, PopupPrefill, ProviderId, ProviderStatus, ProviderTranslation,
     QuickTranslation, ReadAloud, Replacement, Selection, Settings, ShortcutBindings, TextOutcome,
-    Timestamp, Translation,
+    Timestamp, Translation, utf16_length,
 };
 pub use ports::{
     CredentialStore, HistoryStore, HttpClient, HttpMethod, HttpRequest, HttpResponse, ImproveRequest,

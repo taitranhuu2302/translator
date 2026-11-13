@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Translation } from "./ipc";
-import { OPENING, formatFailure, reduce } from "./popupState";
+import { OPENING, formatCaptureFailure, formatFailure, reduce } from "./popupState";
 
 const translation: Translation = {
   text: "Hello world",
@@ -103,6 +103,69 @@ describe("the Quick Translate popup", () => {
     expect(
       reduce(answered, { type: "prefill", prefill: { selection: { text: "Tạm biệt" } } }),
     ).toEqual({ phase: "translating", source: "Tạm biệt" });
+  });
+
+  it("replaces with exactly the translation on screen and does not start over", () => {
+    const translated = reduce(
+      reduce(OPENING, {
+        type: "prefill",
+        prefill: { selection: { text: "Xin chào thế giới" } },
+      }),
+      { type: "translated", translation },
+    );
+
+    const replacing = reduce(translated, { type: "replace_requested" });
+
+    expect(replacing).toEqual({
+      phase: "replacing",
+      source: "Xin chào thế giới",
+      translation,
+    });
+  });
+
+  it("will not replace before the translation exists", () => {
+    const translating = reduce(OPENING, {
+      type: "prefill",
+      prefill: { selection: { text: "Xin chào" } },
+    });
+
+    expect(reduce(translating, { type: "replace_requested" })).toEqual(translating);
+  });
+
+  it("keeps the popup open with an inline failure when the app refuses the replace", () => {
+    const translated = reduce(
+      reduce(OPENING, {
+        type: "prefill",
+        prefill: { selection: { text: "Xin chào" } },
+      }),
+      { type: "translated", translation },
+    );
+    const replacing = reduce(translated, { type: "replace_requested" });
+
+    const failed = reduce(replacing, {
+      type: "replace_failed",
+      error: { capture: "not_writable" },
+    });
+
+    expect(failed.phase).toBe("replace_failed");
+    if (failed.phase !== "replace_failed") return;
+    expect(failed.translation).toEqual(translation);
+    expect(failed.source).toBe("Xin chào");
+    expect(failed.kind).toBe("capture");
+    expect(failed.title.toLowerCase()).toContain("did not accept");
+  });
+
+  it("explains a refusal to replace with no captured selection", () => {
+    const failure = formatCaptureFailure("nothing_to_replace");
+
+    expect(failure.kind).toBe("capture");
+    expect(failure.detail.toLowerCase()).toContain("select");
+  });
+
+  it("explains a secure field refusing the replace", () => {
+    const failure = formatCaptureFailure("secure_input");
+
+    expect(failure.title.toLowerCase()).toContain("secure");
   });
 
   it("stays dismissed even if a slow answer lands afterwards", () => {

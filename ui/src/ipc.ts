@@ -106,6 +106,7 @@ export type CaptureError =
   | "no_accessibility"
   | "secure_input"
   | "nothing_selected"
+  | "nothing_to_replace"
   | "not_writable"
   | { unavailable: { reason: string } };
 
@@ -152,6 +153,14 @@ function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
 export const ipc = {
   quickTranslate: (): Promise<QuickTranslation> => call("quick_translate"),
   replaceSelection: (): Promise<Replacement> => call("replace_selection"),
+
+  /** The popup's Enter: overwrite the captured Selection with the translation
+   * already on screen. It neither re-reads the Selection nor translates again. */
+  replaceWithTranslation: (
+    sourceText: string,
+    translation: Translation,
+  ): Promise<Replacement> =>
+    call("replace_with_translation", { sourceText, translation }),
   readAloud: (): Promise<ReadAloud> => call("read_aloud"),
   translateText: (text: string, mode: Mode): Promise<TextOutcome> =>
     call("translate_text", { text, mode }),

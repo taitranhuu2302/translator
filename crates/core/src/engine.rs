@@ -58,7 +58,7 @@ impl TranslatorEngine {
         })
     }
 
-    /// Replace: translate the Selection and overwrite it in one step.
+    /// Replace: translate the Selection and overwrite it in one step (`⌃⌥R`).
     pub fn replace_selection(&self) -> Result<Replacement, EngineError> {
         let settings = self.settings.load()?;
         let selection = self.capture.read_selection()?;
@@ -71,6 +71,25 @@ impl TranslatorEngine {
         record_translation(self.history.as_ref(), &selection.text, &translation);
         Ok(Replacement {
             source_text: selection.text,
+            translation,
+        })
+    }
+
+    /// The Quick Translate popup's Enter: overwrite the captured Selection with
+    /// the translation already on screen. It never reads or translates again —
+    /// the user must get exactly what they saw — and it writes through the
+    /// target retained when the popup was captured. With nothing retained the
+    /// capture port answers `NothingToReplace` rather than pasting somewhere
+    /// else.
+    pub fn replace_with_translation(
+        &self,
+        source_text: &str,
+        translation: Translation,
+    ) -> Result<Replacement, EngineError> {
+        self.capture.replace_selection(&translation.text)?;
+        record_translation(self.history.as_ref(), source_text, &translation);
+        Ok(Replacement {
+            source_text: source_text.to_owned(),
             translation,
         })
     }
