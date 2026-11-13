@@ -21,6 +21,13 @@ export interface LanguagePair {
   partner: Language;
 }
 
+/** The two languages one translation runs between. Sent only when a window has
+ * reversed the direction for itself (the Translate Window's Swap). */
+export interface Direction {
+  source: Language;
+  target: Language;
+}
+
 export interface ShortcutBindings {
   quick_translate: string;
   replace: string;
@@ -181,8 +188,14 @@ export const ipc = {
   ): Promise<Replacement> =>
     call("replace_with_translation", { sourceText, translation }),
   readAloud: (): Promise<ReadAloud> => call("read_aloud"),
-  translateText: (text: string, mode: Mode): Promise<TextOutcome> =>
-    call("translate_text", { text, mode }),
+  /** Translate or improve typed text. `direction` is omitted for the saved
+   * Language Pair and given only after Swap, which applies to one window. */
+  translateText: (
+    text: string,
+    mode: Mode,
+    direction?: Direction | null,
+  ): Promise<TextOutcome> =>
+    call("translate_text", { text, mode, direction: direction ?? null }),
   providerStatus: (): Promise<ProviderStatus> => call("provider_status"),
 
   /** Save one provider's API key in the Keychain. An empty key clears it. The

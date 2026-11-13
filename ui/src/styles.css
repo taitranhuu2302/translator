@@ -127,6 +127,62 @@ kbd {
   margin-top: 8px;
 }
 
+.pane-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.provider {
+  font-size: 11px;
+  color: GrayText;
+}
+
+.result-text {
+  flex: 1;
+  min-height: 180px;
+  overflow-y: auto;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* The result is for reading and for selecting a phrase: never a form field. */
+  user-select: text;
+  cursor: text;
+}
+
+.result-failure {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--edge);
+  border-left: 3px solid var(--warning);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.result-failure.offline {
+  border-left-color: var(--warning);
+}
+
+.result-failure.provider {
+  border-left-color: var(--danger);
+}
+
+.pane-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.pane-actions .small {
+  margin-left: auto;
+}
+
 .empty {
   color: GrayText;
   font-size: 14px;

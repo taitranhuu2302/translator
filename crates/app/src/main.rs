@@ -2,20 +2,25 @@
 //! Views, panels and menu items call these commands; they never reach a port
 //! implementation directly.
 
+mod frame;
 mod panel;
 
+use std::path::PathBuf;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use frame::{Frame, FrameStore, ScreenRect};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use translator_core::{
-    AzureProvider, CachedProvider, CaptureError, EngineError, HistoryEntry, Mode, MyMemoryProvider,
-    PopupPrefill, ProviderId, ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud,
-    Replacement, Selection, Settings, SettingsStore, SpeechError, TextOutcome, Translation,
-    TranslatorEngine, UreqHttpClient,
+    AzureProvider, CachedProvider, CaptureError, Direction, EngineError, HistoryEntry, Mode,
+    MyMemoryProvider, PopupPrefill, ProviderId, ProviderLadder, ProviderStatus, QuickTranslation,
+    ReadAloud, Replacement, Selection, Settings, SettingsStore, SpeechError, TextOutcome,
+    Translation, TranslatorEngine, UreqHttpClient,
 };
 use translator_platform_macos::{
     clipboard, MacCredentialStore, MacHistoryStore, MacSelectionCapture, MacSettingsStore,
@@ -179,8 +184,9 @@ async fn translate_text(
     state: State<'_, AppState>,
     text: String,
     mode: Mode,
+    direction: Option<Direction>,
 ) -> Result<TextOutcome, EngineError> {
-    state.engine.translate_text(&text, mode)
+    state.engine.translate_text_in(&text, mode, direction)
 }
 
 #[tauri::command]
@@ -330,6 +336,118 @@ fn open_translate_window(app: &AppHandle) {
             let _ = window.set_focus();
         }
         let _ = app.emit("selection-prefill", ());
+    });
+}
+
+/// Where the remembered frame lives: its own file beside the settings document,
+/// never inside it. `None` when the app data directory is unavailable, in which
+/// case the window simply keeps the default frame.
+fn frame_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|directory| directory.join("window-frame.json"))
+}
+
+fn frame_of(window: &tauri::WebviewWindow) -> Option<Frame> {
+    let position = window.outer_position().ok()?;
+    let size = window.outer_size().ok()?;
+    Some(Frame {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    })
+}
+
+/// Put the window back where it was, before it is shown for the first time.
+/// A frame that no longer touches a connected display is dropped, so unplugging
+/// a monitor can never strand the window off screen.
+fn restore_frame(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Some(path) = frame_path(app) else {
+        return;
+    };
+    let Some(frame) = FrameStore::at(path).load() else {
+        return;
+    };
+
+    let screens: Vec<ScreenRect> = window
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|monitor| {
+            let position = monitor.position();
+            let size = monitor.size();
+            ScreenRect {
+                x: position.x,
+                y: position.y,
+                width: size.width,
+                height: size.height,
+            }
+        })
+        .collect();
+    if !frame.is_on_any_screen(&screens) {
+        return;
+    }
+
+    // Size first, then position, so the window is never briefly larger than its
+    // remembered frame while it is being placed.
+    let _ = window.set_size(tauri::PhysicalSize::new(frame.width, frame.height));
+    let _ = window.set_position(tauri::PhysicalPosition::new(frame.x, frame.y));
+}
+
+/// Remember the frame on move and resize, coalescing a drag's burst of events
+/// into one write. The window is hidden rather than destroyed when it is closed,
+/// so the same window (and its typed text) survives until the next shortcut.
+fn track_frame(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let Some(path) = frame_path(app) else {
+        return;
+    };
+    let store = Arc::new(FrameStore::at(path));
+    let (sender, receiver) = mpsc::channel::<Frame>();
+
+    let saver = Arc::clone(&store);
+    std::thread::spawn(move || {
+        while let Ok(mut latest) = receiver.recv() {
+            // Keep taking newer frames until the user stops moving or resizing.
+            loop {
+                match receiver.recv_timeout(Duration::from_millis(400)) {
+                    Ok(newer) => latest = newer,
+                    Err(RecvTimeoutError::Timeout) => break,
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
+            }
+            if let Err(error) = saver.save(latest) {
+                eprintln!("Translator: the window frame was not saved: {error}");
+            }
+        }
+    });
+
+    // The event handler needs the window itself to read the half that did not
+    // change (the size on a move, the position on a resize).
+    let events_window = window.clone();
+    window.on_window_event(move |event| match event {
+        tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+            if let Some(frame) = frame_of(&events_window) {
+                let _ = sender.send(frame);
+            }
+        }
+        tauri::WindowEvent::CloseRequested { api, .. } => {
+            api.prevent_close();
+            if let Some(frame) = frame_of(&events_window) {
+                if let Err(error) = store.save(frame) {
+                    eprintln!("Translator: the window frame was not saved: {error}");
+                }
+            }
+            let _ = events_window.hide();
+        }
+        _ => {}
     });
 }
 
@@ -573,6 +691,11 @@ fn main() {
                     }
                 });
             }
+
+            // The Translate Window's remembered frame is applied while the window
+            // is still hidden, so the first paint is already in the right place.
+            restore_frame(app.handle());
+            track_frame(app.handle());
 
             let routes = ShortcutRoutes {
                 quick_translate: register_shortcut(app.handle(), &quick_translate_binding),

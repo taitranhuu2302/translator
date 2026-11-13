@@ -9,9 +9,9 @@ use translator_core::testing::{
     SpokenUtterance,
 };
 use translator_core::{
-    CachedProvider, CaptureError, EngineError, Improvement, Language, LanguagePair, Mode,
-    PopupPrefill, ProviderId, ProviderTranslation, Selection, Settings, SettingsStore, SpeechError,
-    TextOutcome, TranslateRequest, Translation, TranslatorEngine,
+    CachedProvider, CaptureError, Direction, EngineError, Improvement, Language, LanguagePair,
+    Mode, PopupPrefill, ProviderId, ProviderTranslation, Selection, Settings, SettingsStore,
+    SpeechError, TextOutcome, TranslateRequest, Translation, TranslatorEngine,
 };
 
 struct Harness {
@@ -477,6 +477,53 @@ fn translate_text_returns_a_translation_without_touching_the_selection() {
         other => panic!("expected a translation, got {other:?}"),
     }
     assert_eq!(harness.capture.reads(), 0);
+}
+
+#[test]
+fn translate_text_records_what_it_translated_in_history() {
+    let harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+
+    harness
+        .engine()
+        .translate_text("Xin chào", Mode::Translate)
+        .expect("translate text");
+
+    let entries = harness.history.entries();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].source, "Xin chào");
+    assert_eq!(entries[0].result, "Hello");
+    assert_eq!(entries[0].mode, Mode::Translate);
+}
+
+#[test]
+fn translating_in_a_given_direction_uses_it_and_never_saves_the_settings() {
+    let harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+
+    harness
+        .engine()
+        .translate_text_in(
+            "Xin chào",
+            Mode::Translate,
+            Some(Direction {
+                source: Language::vietnamese(),
+                target: Language::english(),
+            }),
+        )
+        .expect("translate text");
+
+    let request = harness
+        .provider
+        .requests()
+        .pop()
+        .expect("one provider request");
+    assert_eq!(request.source, Some(Language::vietnamese()));
+    assert_eq!(request.target, Language::english());
+    assert_eq!(
+        harness.settings.current().language_pair,
+        LanguagePair::new(Language::english(), Language::vietnamese()),
+        "Swap is for this window only"
+    );
+    assert_eq!(harness.settings.saves(), 0);
 }
 
 #[test]

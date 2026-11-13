@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{CaptureError, EngineError};
-use crate::language::{guess_language, Language, LanguagePair};
+use crate::language::{guess_language, Direction, Language, LanguagePair};
 use crate::model::{
     HistoryEntry, Mode, PopupPrefill, ProviderId, ProviderStatus, QuickTranslation, ReadAloud,
     Replacement, Selection, Settings, TextOutcome, Timestamp, Translation,
@@ -165,14 +165,32 @@ impl TranslatorEngine {
     /// Translate Window: translate or improve text the user typed, without
     /// touching the Selection.
     pub fn translate_text(&self, text: &str, mode: Mode) -> Result<TextOutcome, EngineError> {
+        self.translate_text_in(text, mode, None)
+    }
+
+    /// The same translation, optionally in a direction the caller chose for this
+    /// request. The Translate Window's Swap passes one so the reversed direction
+    /// applies to that window only: an override neither reads nor writes the
+    /// saved Language Pair. Everything else — the provider ladder, caching and
+    /// history — is identical to `translate_text`, so a swap is not a second
+    /// translation path.
+    pub fn translate_text_in(
+        &self,
+        text: &str,
+        mode: Mode,
+        direction: Option<Direction>,
+    ) -> Result<TextOutcome, EngineError> {
         match mode {
             Mode::Translate => {
-                let settings = self.settings.load()?;
-                let translation = resolve_translation(
-                    self.provider.as_ref(),
-                    text,
-                    &settings.language_pair,
-                )?;
+                let translation = match direction {
+                    Some(direction) => {
+                        translate_in_direction(self.provider.as_ref(), text, direction)?
+                    }
+                    None => {
+                        let settings = self.settings.load()?;
+                        resolve_translation(self.provider.as_ref(), text, &settings.language_pair)?
+                    }
+                };
                 record_translation(self.history.as_ref(), text, &translation);
                 Ok(TextOutcome::Translation(translation))
             }
@@ -253,6 +271,25 @@ fn resolve_translation(
     pair: &LanguagePair,
 ) -> Result<Translation, crate::error::ProviderError> {
     let direction = pair.direction_for(text);
+    let response = provider.translate(&TranslateRequest {
+        text: text.to_owned(),
+        source: Some(direction.source),
+        target: direction.target.clone(),
+    })?;
+    Ok(Translation {
+        text: response.text,
+        provider: response.provider,
+        detected_source: response.detected_source,
+        target: direction.target,
+    })
+}
+
+/// Translate in a direction chosen by the caller (the Translate Window's Swap).
+fn translate_in_direction(
+    provider: &dyn TranslationProvider,
+    text: &str,
+    direction: Direction,
+) -> Result<Translation, crate::error::ProviderError> {
     let response = provider.translate(&TranslateRequest {
         text: text.to_owned(),
         source: Some(direction.source),

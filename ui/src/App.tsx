@@ -1,14 +1,23 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import { providerLabel } from "./failures";
 import { formatShortcut, captureFailure, type CaptureFailure } from "./format";
 import {
   ipc,
   onSelectionPrefill,
+  type Direction,
+  type EngineError,
   type Prefill,
   type Settings,
 } from "./ipc";
 import { Onboarding } from "./Onboarding";
 import { ProviderSettings } from "./ProviderSettings";
+import {
+  EMPTY_RESULT,
+  reduceResult,
+  swapDirection,
+  type TranslateResult,
+} from "./translateWindow";
 
 const FALLBACK_SHORTCUT = "Ctrl+Alt+E";
 
@@ -22,15 +31,96 @@ export function App() {
   const [text, setText] = useState("");
   const [failure, setFailure] = useState<CaptureFailure | null>(null);
 
+  // The result pane, the direction this window translates in (null means the
+  // saved Language Pair), and whether the Copy button has just been used.
+  const [result, setResult] = useState<TranslateResult>(EMPTY_RESULT);
+  const [direction, setDirection] = useState<Direction | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Every request gets an id; an answer whose id is no longer current belongs to
+  // an abandoned translate (the input was cleared, the window reopened, or a
+  // newer request started) and must not touch the pane.
+  const requestId = useRef(0);
+
   const applyPrefill = useCallback((prefill: Prefill | null) => {
     if (!prefill) return;
     if ("selection" in prefill) {
+      requestId.current += 1;
       setText(prefill.selection.text);
       setFailure(null);
+      setResult((state) => reduceResult(state, { type: "cleared" }));
+      // A new opening starts from the saved pair again; Swap never survives it.
+      setDirection(null);
+      setCopied(false);
       return;
     }
     setFailure(captureFailure(prefill.failure));
   }, []);
+
+  const runTranslation = useCallback(
+    async (source: string, requested: Direction | null) => {
+      const id = ++requestId.current;
+      setCopied(false);
+      if (source.trim().length === 0) {
+        setResult((state) => reduceResult(state, { type: "cleared" }));
+        return;
+      }
+      setResult((state) => reduceResult(state, { type: "started" }));
+      try {
+        const outcome = await ipc.translateText(source, "translate", requested);
+        if (requestId.current !== id) return;
+        if ("translation" in outcome) {
+          const translation = outcome.translation;
+          setResult((state) =>
+            reduceResult(state, { type: "translated", translation }),
+          );
+        }
+      } catch (error) {
+        if (requestId.current !== id) return;
+        setResult((state) =>
+          reduceResult(state, { type: "failed", error: error as EngineError }),
+        );
+      }
+    },
+    [],
+  );
+
+  const translate = useCallback(() => {
+    void runTranslation(text, direction);
+  }, [direction, runTranslation, text]);
+
+  const changeText = (value: string) => {
+    setText(value);
+    setCopied(false);
+    // Emptying the input clears the result and abandons any answer still in
+    // flight, so the pane never shows a translation of text that is gone.
+    if (value.trim().length === 0) {
+      requestId.current += 1;
+      setResult((state) => reduceResult(state, { type: "cleared" }));
+    }
+  };
+
+  // Swap reverses the translation on screen: its text becomes the new source and
+  // its language the new source language. The direction lives in this window's
+  // state only — the saved Target is never written.
+  const swap = () => {
+    if (result.phase !== "translated" || !settings) return;
+    const next = swapDirection(settings.language_pair, result.translation);
+    setText(result.translation.text);
+    setDirection(next);
+    void runTranslation(result.translation.text, next);
+  };
+
+  const copy = () => {
+    if (result.phase !== "translated") return;
+    const translation = result.translation.text;
+    ipc
+      .copyText(translation)
+      .then(() => setCopied(true))
+      .catch(() => {
+        // Nothing was copied, so the button must not claim otherwise.
+      });
+  };
 
   // Settings decide whether the onboarding shows and how the shortcut reads.
   useEffect(() => {
@@ -116,6 +206,9 @@ export function App() {
     setSettings(await ipc.completeOnboarding());
   };
 
+  const canSwap = settings !== null && result.phase === "translated";
+  const canCopy = result.phase === "translated";
+
   return (
     <main className="app">
       <header className="topbar">
@@ -151,21 +244,73 @@ export function App() {
             aria-label="Text to translate"
             className="source-input"
             value={text}
-            onChange={(event) => setText(event.target.value)}
+            onChange={(event) => changeText(event.target.value)}
+            onKeyDown={(event) => {
+              // Enter translates; Shift+Enter is the newline the editor needs.
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                translate();
+              }
+            }}
             placeholder={`Select text in any app and press ${translateShortcut}, or type here.`}
             spellCheck={false}
             autoFocus
           />
-          <p className="muted small">
-            {text.length === 0
-              ? "Nothing selected — the window opens empty."
-              : `${text.length} characters`}
-          </p>
+          <div className="pane-actions">
+            <button className="primary" onClick={translate}>
+              Translate
+            </button>
+            <span className="muted small">
+              {text.trim().length === 0
+                ? "Nothing selected — the window opens empty."
+                : `${text.length} characters · Enter translates, Shift+Enter adds a line`}
+            </span>
+          </div>
         </section>
 
         <section className="pane">
-          <h2>Translation</h2>
-          <p className="empty">The translation will appear here.</p>
+          <div className="pane-head">
+            <h2>Translation</h2>
+            {result.phase === "translated" ? (
+              <span className="provider">
+                via {providerLabel(result.translation.provider)}
+              </span>
+            ) : null}
+          </div>
+
+          {result.phase === "empty" ? (
+            <p className="empty">
+              Press Enter to translate. The result can be selected in part.
+            </p>
+          ) : null}
+
+          {result.phase === "translating" ? (
+            <p className="empty" role="status">
+              Translating…
+            </p>
+          ) : null}
+
+          {result.phase === "translated" ? (
+            <p className="result-text" aria-label="Translation">
+              {result.translation.text}
+            </p>
+          ) : null}
+
+          {result.phase === "failed" ? (
+            <div className={`result-failure ${result.kind}`} role="alert">
+              <strong>{result.title}</strong>
+              <span className="muted">{result.detail}</span>
+            </div>
+          ) : null}
+
+          <div className="pane-actions">
+            <button onClick={swap} disabled={!canSwap}>
+              Swap
+            </button>
+            <button onClick={copy} disabled={!canCopy}>
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
         </section>
       </div>
 

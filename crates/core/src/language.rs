@@ -61,7 +61,7 @@ impl Default for LanguagePair {
 /// The two languages one piece of text is translated between. `source` is never
 /// `target`: a provider rejects `en|en`, so a degenerate pair falls back to the
 /// other language of the v1 pair instead of asking for a language into itself.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Direction {
     pub source: Language,
     pub target: Language,

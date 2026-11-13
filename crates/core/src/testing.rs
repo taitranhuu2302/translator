@@ -421,6 +421,7 @@ impl HistoryStore for InMemoryHistory {
 #[derive(Clone)]
 pub struct InMemorySettings {
     settings: Arc<Mutex<Settings>>,
+    saves: Arc<Mutex<usize>>,
 }
 
 impl Default for InMemorySettings {
@@ -433,11 +434,18 @@ impl InMemorySettings {
     pub fn with(settings: Settings) -> Self {
         Self {
             settings: Arc::new(Mutex::new(settings)),
+            saves: Arc::new(Mutex::new(0)),
         }
     }
 
     pub fn current(&self) -> Settings {
         self.settings.lock().unwrap().clone()
+    }
+
+    /// How many times the app wrote the settings document. A window that changes
+    /// its own direction must leave this at zero.
+    pub fn saves(&self) -> usize {
+        *self.saves.lock().unwrap()
     }
 }
 
@@ -448,6 +456,7 @@ impl SettingsStore for InMemorySettings {
 
     fn save(&self, settings: &Settings) -> Result<(), SettingsError> {
         *self.settings.lock().unwrap() = settings.clone();
+        *self.saves.lock().unwrap() += 1;
         Ok(())
     }
 }
