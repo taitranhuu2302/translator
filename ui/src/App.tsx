@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { providerLabel } from "./failures";
-import { formatShortcut, captureFailure, type CaptureFailure } from "./format";
+import { formatShortcut, providerLabel } from "./format";
 import {
   filterHistory,
   historyModeLabel,
@@ -27,6 +26,9 @@ import {
   type Prefill,
   type Settings,
 } from "./ipc";
+import { noticeFor, type Notice } from "./notice";
+import { performNoticeAction } from "./noticeActions";
+import { CaptureNoticeView, NoticeView } from "./NoticeView";
 import { Onboarding } from "./Onboarding";
 import { SettingsPane } from "./SettingsPane";
 import {
@@ -66,7 +68,7 @@ export function App() {
   const [granted, setGranted] = useState<boolean | null>(null);
 
   const [text, setText] = useState("");
-  const [failure, setFailure] = useState<CaptureFailure | null>(null);
+  const [failure, setFailure] = useState<Notice | null>(null);
   const [mode, setMode] = useState<Mode>("translate");
   const [surface, setSurface] = useState<Surface>("translate");
 
@@ -112,7 +114,7 @@ export function App() {
       setCopiedPart(null);
       return;
     }
-    setFailure(captureFailure(prefill.failure));
+    setFailure(noticeFor(prefill.failure));
   }, []);
 
   // The newest entries, unfiltered: the History surface narrows them in memory.
@@ -331,7 +333,8 @@ export function App() {
           if (!cancelled) setGranted(isGranted);
         })
         .catch(() => {
-          // Leave the state unknown; the notice then offers both paths.
+          // Leave the state unknown: a grant that cannot be read back must not
+          // hide the notice that explains how to make one.
         });
     };
     check();
@@ -427,20 +430,6 @@ export function App() {
     settings?.shortcuts.translate_window ?? FALLBACK_SHORTCUT,
   );
 
-  const requestAccess = async () => {
-    try {
-      setGranted(await ipc.requestAccessibility());
-    } catch {
-      setGranted(false);
-    }
-  };
-
-  const openAccessSettings = () => {
-    void ipc.openAccessibilitySettings().catch(() => {
-      // Nothing to say: the System Settings pane may simply not open.
-    });
-  };
-
   const finishOnboarding = async () => {
     setSettings(await ipc.completeOnboarding());
   };
@@ -476,12 +465,11 @@ export function App() {
       ) : null}
 
       {failure ? (
-        <CaptureNotice
-          failure={failure}
+        <CaptureNoticeView
+          notice={failure}
           granted={granted}
           shortcut={translateShortcut}
-          onRequestAccess={requestAccess}
-          onOpenSettings={openAccessSettings}
+          onAction={performNoticeAction}
         />
       ) : null}
 
@@ -604,10 +592,7 @@ export function App() {
               ) : null}
 
               {improvement.phase === "failed" ? (
-                <div className={`result-failure ${improvement.kind}`} role="alert">
-                  <strong>{improvement.title}</strong>
-                  <span className="muted">{improvement.detail}</span>
-                </div>
+                <NoticeView className="result-failure" notice={improvement} />
               ) : null}
             </>
           ) : (
@@ -631,10 +616,7 @@ export function App() {
               ) : null}
 
               {result.phase === "failed" ? (
-                <div className={`result-failure ${result.kind}`} role="alert">
-                  <strong>{result.title}</strong>
-                  <span className="muted">{result.detail}</span>
-                </div>
+                <NoticeView className="result-failure" notice={result} />
               ) : null}
             </>
           )}
@@ -730,70 +712,6 @@ function HistoryPane({
           </ul>
         )}
       </section>
-    </div>
-  );
-}
-
-function CaptureNotice({
-  failure,
-  granted,
-  shortcut,
-  onRequestAccess,
-  onOpenSettings,
-}: {
-  failure: CaptureFailure;
-  granted: boolean | null;
-  shortcut: string;
-  onRequestAccess: () => void;
-  onOpenSettings: () => void;
-}) {
-  if (failure.kind === "no_accessibility") {
-    if (granted) {
-      return (
-        <p className="notice ok">
-          Accessibility is on. Select text in any app and press {shortcut} again.
-        </p>
-      );
-    }
-    return (
-      <div className="notice attention">
-        <div>
-          <strong>Translator needs Accessibility to read your selection.</strong>
-          <span className="muted">
-            macOS treats the selected text as another app's data. Grant it once
-            and the shortcut works in every app, including after updates.
-          </span>
-        </div>
-        <div className="actions">
-          <button className="primary" onClick={onRequestAccess}>
-            Grant Accessibility
-          </button>
-          <button onClick={onOpenSettings}>Open System Settings</button>
-        </div>
-      </div>
-    );
-  }
-
-  if (failure.kind === "secure_input") {
-    return (
-      <div className="notice warning">
-        <div>
-          <strong>This is a secure field, so nothing was read.</strong>
-          <span className="muted">
-            Passwords and other secure input never leave your Mac. Finish in
-            that field, then try again somewhere else.
-          </span>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="notice">
-      <div>
-        <strong>The selection could not be read.</strong>
-        <span className="muted">{failure.reason}</span>
-      </div>
     </div>
   );
 }

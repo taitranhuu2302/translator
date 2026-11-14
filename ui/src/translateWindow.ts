@@ -6,14 +6,14 @@
  * the window's rules are tested without a web view, a provider or a running app,
  * and the React component only draws state and calls the IPC seam.
  */
-import { formatFailure } from "./failures";
 import type { Direction, EngineError, LanguagePair, Translation } from "./ipc";
+import { noticeFor, type Notice } from "./notice";
 
 export type TranslateResult =
   | { phase: "empty" }
   | { phase: "translating" }
   | { phase: "translated"; translation: Translation }
-  | ({ phase: "failed" } & ReturnType<typeof formatFailure>);
+  | ({ phase: "failed" } & Notice);
 
 export type TranslateEvent =
   | { type: "started" }
@@ -51,7 +51,7 @@ export function reduceResult(
 
     case "failed":
       if (state.phase !== "translating") return state;
-      return { phase: "failed", ...formatFailure(event.error) };
+      return { phase: "failed", ...noticeFor(event.error) };
   }
 }
 

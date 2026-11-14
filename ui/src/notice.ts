@@ -1,70 +1,114 @@
 /**
- * Turning a typed engine failure into words a person can act on.
+ * Turning a typed engine failure into the words a surface shows.
  *
- * Both surfaces invest in the same wording: the Quick Translate popup and the
- * Translate Window's result pane. Keeping the rules here means a failure reads
- * the same wherever it surfaced, and `popupState.ts` re-exports them so the
- * popup's public shape did not have to move.
+ * A notice is the whole of what a surface may say about a failure: one styling
+ * kind, one title, one detail, and at most one action. Quick Translate and the
+ * Translate Window both draw this model and add nothing of their own, so a
+ * failure reads the same wherever it surfaced and a wording change is one edit
+ * here.
  */
-import type {
-  CaptureError,
-  EngineError,
-  ProviderError,
-  ProviderId,
-} from "./ipc";
+import { providerLabel } from "./format";
+import type { CaptureError, EngineError, ProviderError } from "./ipc";
 
-export type FailureKind = "offline" | "capture" | "provider";
+/** The styling kind. It is derived from the model, never chosen by a surface.
+ * `ok` marks a cause that has been resolved, such as a grant that landed while
+ * the window stayed open; `error` is for an engine failure that is neither a
+ * capture nor a provider failure. */
+export type NoticeKind =
+  | "offline"
+  | "capture"
+  | "provider"
+  | "error"
+  | "ok";
 
-export interface PopupFailure {
-  kind: FailureKind;
-  title: string;
-  detail: string;
+/** The one command a notice may offer. `id` is what a surface wires up; the
+ * label is the notice's own words, so no surface names the action itself. */
+export interface NoticeAction {
+  id: "open_accessibility_settings";
+  label: string;
 }
 
-/** Turn any engine failure into words the result pane can show. Offline is
- * named as offline; every other provider failure stays a provider failure. */
-export function formatFailure(error: EngineError): PopupFailure {
-  if ("provider" in error) {
-    return formatProviderFailure(error.provider);
-  }
+/** What a surface draws for a failure, or for the resolved state that replaces
+ * one. There is exactly one of these per outcome, and no surface adds, trims,
+ * or rewords its text. */
+export interface Notice {
+  kind: NoticeKind;
+  title: string;
+  detail: string;
+  action?: NoticeAction;
+}
+
+/** Turn any engine failure into a notice. */
+export function noticeFor(error: EngineError): Notice {
   if ("capture" in error) {
-    return formatCaptureFailure(error.capture);
+    return noticeForCapture(error.capture);
   }
+  if ("provider" in error) {
+    return noticeForProvider(error.provider);
+  }
+  // Speech, history, settings and credentials failures do not reach the two
+  // translate surfaces today. They still get one notice rather than nothing,
+  // and it is an error rather than a provider's fault.
   return {
-    kind: "provider",
+    kind: "error",
     title: "The translation did not finish.",
     detail: "Try again.",
   };
 }
 
-export function formatCaptureFailure(capture: CaptureError): PopupFailure {
+/**
+ * The notice that replaces an Accessibility failure once the grant has landed
+ * while the window stayed open. The cause is gone, so it is not a failure; it
+ * still comes from the model, so a surface adds no sentence of its own.
+ */
+export function accessibilityGrantedNotice(shortcut: string): Notice {
+  return {
+    kind: "ok",
+    title: "Accessibility is on.",
+    detail: `Select text in any app and press ${shortcut} again.`,
+  };
+}
+
+/** True for the one notice whose fix can land while a surface stays open. */
+export function isAccessibilityNotice(notice: Notice): boolean {
+  return notice.action?.id === "open_accessibility_settings";
+}
+
+/** Turn a capture failure into a notice. Every capture kind is handled here. */
+export function noticeForCapture(capture: CaptureError): Notice {
   if (capture === "no_accessibility") {
     return {
       kind: "capture",
       title: "Translator needs Accessibility to read your selection.",
       detail:
         "Open System Settings → Privacy & Security → Accessibility, enable Translator, then press the shortcut again.",
+      action: {
+        id: "open_accessibility_settings",
+        label: "Open System Settings",
+      },
     };
   }
   if (capture === "secure_input") {
     return {
       kind: "capture",
       title: "This is a secure field, so nothing was read.",
-      detail: "Passwords stay on your Mac. Finish there, then try again elsewhere.",
+      detail:
+        "Passwords stay on your Mac. Finish there, then try again elsewhere.",
     };
   }
   if (capture === "nothing_selected") {
     return {
       kind: "capture",
       title: "Select something first.",
-      detail: "Select text in any app, then press the Quick Translate shortcut.",
+      detail: "Select text in any app, then press the shortcut again.",
     };
   }
   if (capture === "nothing_to_replace") {
     return {
       kind: "capture",
       title: "There is no captured selection to replace.",
-      detail: "Select text in the app you were working in, then press the shortcut again.",
+      detail:
+        "Select text in the app you were working in, then press the shortcut again.",
     };
   }
   if (capture === "not_writable") {
@@ -81,14 +125,15 @@ export function formatCaptureFailure(capture: CaptureError): PopupFailure {
       detail: capture.unavailable.reason,
     };
   }
+  // A wire value this build does not know still reaches the user as a notice.
   return {
     kind: "capture",
     title: "The selection could not be read.",
-    detail: "Try again, or use the Translate Window.",
+    detail: "Try again.",
   };
 }
 
-function formatProviderFailure(error: ProviderError): PopupFailure {
+function noticeForProvider(error: ProviderError): Notice {
   if (error === "offline") {
     return {
       kind: "offline",
@@ -168,12 +213,3 @@ function formatProviderFailure(error: ProviderError): PopupFailure {
   };
 }
 
-const PROVIDER_NAMES: Record<ProviderId, string> = {
-  azure: "Azure",
-  my_memory: "MyMemory",
-  groq: "Groq",
-};
-
-export function providerLabel(provider: ProviderId): string {
-  return PROVIDER_NAMES[provider];
-}

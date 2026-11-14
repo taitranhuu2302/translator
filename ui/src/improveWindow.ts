@@ -8,14 +8,14 @@
  * text is not part of this state at all, so no answer or failure can clear what
  * the user typed.
  */
-import { formatFailure, type PopupFailure } from "./failures";
 import type { EngineError, ImprovePart, Improvement } from "./ipc";
+import { noticeFor, type Notice } from "./notice";
 
 export type ImproveResult =
   | { phase: "empty" }
   | { phase: "improving"; requestId: number; corrected: string; better: string }
   | { phase: "improved"; requestId: number; corrected: string; better: string }
-  | ({ phase: "failed"; requestId: number } & PopupFailure);
+  | ({ phase: "failed"; requestId: number } & Notice);
 
 export type ImproveEvent =
   | { type: "started"; requestId: number }
@@ -92,7 +92,7 @@ export function reduceImprovement(
       return {
         phase: "failed",
         requestId: event.requestId,
-        ...formatFailure(event.error),
+        ...noticeFor(event.error),
       };
     }
   }

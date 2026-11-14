@@ -201,20 +201,27 @@ kbd {
   background: var(--surface);
 }
 
-.notice > div:first-child {
+.notice-text {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.notice > .notice-text {
   min-width: 240px;
   flex: 1;
 }
 
-.notice.attention {
+.notice.capture {
   border-left-color: var(--accent);
 }
 
-.notice.warning {
+.notice.offline {
   border-left-color: var(--warning);
+}
+
+.notice.provider {
+  border-left-color: var(--danger);
 }
 
 .notice.ok {
@@ -395,7 +402,7 @@ button.primary {
 .popup-failure {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
   padding: 8px 10px;
   border: 1px solid var(--edge);
   border-left: 3px solid var(--danger);
