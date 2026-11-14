@@ -33,7 +33,9 @@ if grep -q "translator-ui-placeholder" ui/dist/index.html; then
 fi
 
 echo "==> building app"
-cargo build --release -p translator-app
+# `custom-protocol` is what makes the shell embed ui/dist; without it the
+# release binary points at the `devUrl` vite server instead of the bundle.
+cargo build --release -p translator-app --features custom-protocol
 
 echo "==> assembling $APP"
 rm -rf "$APP"

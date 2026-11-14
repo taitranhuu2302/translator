@@ -48,6 +48,15 @@ See [ADR-0001](docs/adr/0001-rust-core-with-tauri-shell.md) for the stack and [A
 
 `scripts/build.sh` packages a real `.app` with `LSUIElement` and signs it with the stable local identity; it refuses to package unsigned or ad-hoc. See [ADR-0004](docs/adr/0004-stable-signing-from-first-commit.md).
 
+## Develop
+
+```bash
+npm install           # once: pulls @tauri-apps/cli
+npx tauri dev         # vite on :1420 with HMR, the webview talks to the real engine`
+```
+
+`tauri dev` runs the unsigned `target/debug/translator`, so the Accessibility grant does not apply: Selection capture and the non-activating popup only behave under `scripts/build.sh`. The production build turns on the `custom-protocol` feature, which is what embeds `ui/dist` rather than loading the dev server.
+
 ## Project docs
 
 - [GLOSSARY.md](GLOSSARY.md) — the domain language used in code, specs and tickets

@@ -9,6 +9,12 @@ description = "Tauri v2 shell owning the engine and hosting the React UI"
 name = "translator"
 path = "src/main.rs"
 
+[features]
+# Production only: makes `generate_context!` embed `frontendDist` instead of
+# loading `devUrl`. `tauri dev` drops it via `--no-default-features`, and
+# `tauri build` adds it, so `scripts/build.sh` has to ask for it explicitly.
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
