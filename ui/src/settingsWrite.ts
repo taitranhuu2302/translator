@@ -105,10 +105,13 @@ export interface SettingsWriter {
   change(mutation: PlainSettingsMutation): Promise<SettingsChange>;
 }
 
-/** One sentence for a settings file that could not be read, and one for a
- * write that failed. Every write shares them rather than each naming its own
- * field, so the app never explains one failure two ways. */
-const READ_FAILED = "The settings could not be read.";
+/** The one sentence for a settings file that could not be read. It is exported
+ * because the surfaces that load settings directly report the same failure and
+ * must not word it a second way. */
+export const SETTINGS_READ_FAILED = "The settings could not be read.";
+
+/** One sentence for a write that failed. Every write shares it rather than each
+ * naming its own field, so the app never explains one failure two ways. */
 const SAVE_FAILED = "The setting could not be saved.";
 const REBIND_FAILED = "The shortcut could not be changed.";
 const RESET_FAILED = "The shipped settings could not be restored.";
@@ -130,7 +133,7 @@ export function createSettingsWriter(
         try {
           current = await effects.read();
         } catch {
-          return failed(READ_FAILED);
+          return failed(SETTINGS_READ_FAILED);
         }
         const pair = withTarget(current.language_pair, mutation.target);
         if (pair === current.language_pair) {
@@ -155,7 +158,7 @@ export function createSettingsWriter(
         try {
           current = await effects.read();
         } catch {
-          return failed(READ_FAILED);
+          return failed(SETTINGS_READ_FAILED);
         }
         if (!regionChanged(current, mutation.region)) {
           return {
@@ -182,7 +185,7 @@ export function createSettingsWriter(
         try {
           current = await effects.read();
         } catch {
-          return failed(READ_FAILED);
+          return failed(SETTINGS_READ_FAILED);
         }
         let result: RebindResult;
         try {
