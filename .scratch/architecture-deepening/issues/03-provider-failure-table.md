@@ -50,6 +50,7 @@ Every current per-provider decision is preserved exactly and turned into data: A
 | `cargo test -p translator-core --test engine_seam` | 74 passed, 0 failed — including 11 new ladder-driven cases: 401/403 quota/403 resource/403 fallback, 429's sentence and no session skip, each rung's 5xx family and message, Groq 422/498, MyMemory body-level quota, unrecognised statuses, and transport mapping per rung |
 | `cargo test -p translator-core` | 194 passed, 0 failed (120 unit + 74 engine seam) |
 | `./scripts/test.sh` | exit 0 — typecheck, 9 UI files / 118 tests, production build, IPC boundary, `cargo test --workspace` (30 + 120 + 3 + 74 + 22) |
+| `./scripts/test.sh` after merging `spec/architecture-deepening` | exit 0 — 10 UI files / 132 tests; `cargo test --workspace` (34 + 120 + 3 + 74 + 22 + 2); no conflicts |
 
 No manual checks: the ticket changes no wording or runtime behaviour, and the
 sentences are asserted through the ladder. The app was not launched.
