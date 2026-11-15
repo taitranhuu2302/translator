@@ -122,8 +122,8 @@ export function ProviderSettings({
         setNotice(outcome.problem);
         return;
       }
-      onSettingsSaved(outcome.mirror);
-      setRegionDraft(outcome.mirror.azure_region);
+      onSettingsSaved(outcome.mirror.settings);
+      setRegionDraft(outcome.mirror.settings.azure_region);
       setNotice(outcome.notice);
     } finally {
       setBusy(false);

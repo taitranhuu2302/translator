@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { Settings, ShortcutAction } from "./ipc";
+import type { ProviderId, ProviderStatus, Settings, ShortcutAction } from "./ipc";
 import {
   createSettingsWriter,
+  type ProviderKeyChange,
+  type ResetChange,
+  type SettingsChange,
   type SettingsWriteEffects,
 } from "./settingsWrite";
 
@@ -33,10 +36,28 @@ const shipped: Settings = {
   },
 };
 
+/** The status the keychain answers after a write. It is the whole status, not
+ * one provider's flag: the row mirrors the object the shell returned. */
+const stored: ProviderStatus = {
+  azure_configured: true,
+  groq_configured: true,
+  azure_skipped: false,
+  groq_skipped: false,
+};
+
+const cleared: ProviderStatus = {
+  azure_configured: false,
+  groq_configured: false,
+  azure_skipped: false,
+  groq_skipped: false,
+};
+
 interface Calls {
   saves: Settings[];
   rebinds: { action: ShortcutAction; binding: string }[];
   resets: number;
+  savedKeys: { provider: ProviderId; key: string }[];
+  clearedKeys: ProviderId[];
 }
 
 /** The writer under test, with effects that record what it asked the shell to
@@ -45,7 +66,13 @@ function harness(overrides: Partial<SettingsWriteEffects> = {}): {
   writer: ReturnType<typeof createSettingsWriter>;
   calls: Calls;
 } {
-  const calls: Calls = { saves: [], rebinds: [], resets: 0 };
+  const calls: Calls = {
+    saves: [],
+    rebinds: [],
+    resets: 0,
+    savedKeys: [],
+    clearedKeys: [],
+  };
   const effects: SettingsWriteEffects = {
     read: async () => saved,
     save: async (next) => {
@@ -59,9 +86,36 @@ function harness(overrides: Partial<SettingsWriteEffects> = {}): {
       calls.resets += 1;
       return { settings: saved, bindings: [], save_problem: null };
     },
+    saveProviderKey: async (provider, key) => {
+      calls.savedKeys.push({ provider, key });
+      return stored;
+    },
+    clearProviderKey: async (provider) => {
+      calls.clearedKeys.push(provider);
+      return cleared;
+    },
     ...overrides,
   };
   return { writer: createSettingsWriter(effects), calls };
+}
+
+/** The settings a view may mirror after a settings-shaped change. */
+function mirroredSettings(
+  outcome: SettingsChange | ResetChange,
+): Settings | null {
+  return outcome.mirror === null ? null : outcome.mirror.settings;
+}
+
+/** The notice a view draws after a settings-shaped change. */
+function settingsNotice(
+  outcome: SettingsChange | ProviderKeyChange | ResetChange,
+): string | null {
+  return outcome.mirror === null ? null : outcome.notice;
+}
+
+/** The provider status a key row may mirror. */
+function mirroredStatus(outcome: ProviderKeyChange): ProviderStatus | null {
+  return outcome.mirror === null ? null : outcome.mirror.status;
 }
 
 describe("changing the Target", () => {
@@ -74,7 +128,7 @@ describe("changing the Target", () => {
       ...saved,
       language_pair: { target: "vi", partner: "en" },
     };
-    expect(outcome.mirror).toEqual(expected);
+    expect(mirroredSettings(outcome)).toEqual(expected);
     expect(calls.saves).toEqual([expected]);
   });
 });
@@ -121,8 +175,8 @@ describe("a mutation that changes nothing", () => {
     const outcome = await writer.change({ kind: "target", target: "en" });
 
     expect(calls.saves).toEqual([]);
-    expect(outcome.mirror).toEqual(saved);
-    expect(outcome.mirror === null ? null : outcome.notice).toBeNull();
+    expect(mirroredSettings(outcome)).toEqual(saved);
+    expect(settingsNotice(outcome)).toBeNull();
   });
 });
 
@@ -136,11 +190,9 @@ describe("changing the Azure region", () => {
     });
 
     const expected: Settings = { ...saved, azure_region: "eastus" };
-    expect(outcome.mirror).toEqual(expected);
+    expect(mirroredSettings(outcome)).toEqual(expected);
     expect(calls.saves).toEqual([expected]);
-    expect(outcome.mirror === null ? null : outcome.notice).toBe(
-      "Region saved: eastus.",
-    );
+    expect(settingsNotice(outcome)).toBe("Region saved: eastus.");
   });
 
   it("does not mirror a region that could not be saved", async () => {
@@ -171,8 +223,8 @@ describe("changing the Azure region", () => {
     });
 
     expect(calls.saves).toEqual([]);
-    expect(outcome.mirror).toEqual(saved);
-    expect(outcome.mirror === null ? null : outcome.notice).toBeNull();
+    expect(mirroredSettings(outcome)).toEqual(saved);
+    expect(settingsNotice(outcome)).toBeNull();
   });
 });
 
@@ -190,7 +242,7 @@ describe("rebinding a shortcut", () => {
       { action: "replace", binding: "Cmd+Shift+W" },
     ]);
     expect(calls.saves).toEqual([]);
-    expect(outcome.mirror).toEqual({
+    expect(mirroredSettings(outcome)).toEqual({
       ...saved,
       shortcuts: { ...saved.shortcuts, replace: "Cmd+Shift+W" },
     });
@@ -236,6 +288,75 @@ describe("rebinding a shortcut", () => {
   });
 });
 
+describe("saving a provider key", () => {
+  it("returns the refreshed provider status to mirror, and writes no settings", async () => {
+    const { writer, calls } = harness();
+
+    const outcome = await writer.change({
+      kind: "save_provider_key",
+      provider: "azure",
+      key: "secret",
+    });
+
+    expect(calls.savedKeys).toEqual([{ provider: "azure", key: "secret" }]);
+    expect(calls.saves).toEqual([]);
+    expect(mirroredStatus(outcome)).toEqual(stored);
+    expect(settingsNotice(outcome)).toBeNull();
+  });
+
+  it("does not mirror the status when the keychain refused, and gives the one write-failure sentence", async () => {
+    const { writer } = harness({
+      saveProviderKey: async () => {
+        throw new Error("the keychain refused");
+      },
+    });
+
+    const outcome = await writer.change({
+      kind: "save_provider_key",
+      provider: "groq",
+      key: "secret",
+    });
+
+    expect(outcome.mirror).toBeNull();
+    expect(outcome).toMatchObject({
+      problem: "The setting could not be saved.",
+    });
+  });
+});
+
+describe("clearing a provider key", () => {
+  it("returns the refreshed provider status to mirror, and writes no settings", async () => {
+    const { writer, calls } = harness();
+
+    const outcome = await writer.change({
+      kind: "clear_provider_key",
+      provider: "groq",
+    });
+
+    expect(calls.clearedKeys).toEqual(["groq"]);
+    expect(calls.saves).toEqual([]);
+    expect(mirroredStatus(outcome)).toEqual(cleared);
+  });
+
+  it("does not mirror the status when the keychain refused, and gives the one write-failure sentence", async () => {
+    const { writer } = harness({
+      clearProviderKey: async () => {
+        throw new Error("the keychain refused");
+      },
+    });
+
+    const outcome = await writer.change({
+      kind: "clear_provider_key",
+      provider: "azure",
+    });
+
+    expect(outcome.mirror).toBeNull();
+    expect(outcome).toMatchObject({
+      problem: "The setting could not be saved.",
+    });
+  });
+});
+
 describe("resetting shortcuts and the language pair", () => {
   it("mirrors the shipped settings the shell wrote", async () => {
     const { writer, calls } = harness({
@@ -248,8 +369,8 @@ describe("resetting shortcuts and the language pair", () => {
 
     const outcome = await writer.change({ kind: "reset" });
 
-    expect(outcome.mirror).toEqual(shipped);
-    expect(outcome.mirror === null ? null : outcome.notice).toBe(
+    expect(mirroredSettings(outcome)).toEqual(shipped);
+    expect(settingsNotice(outcome)).toBe(
       "Shortcuts and language pair put back to the shipped settings.",
     );
     expect(calls.saves).toEqual([]);

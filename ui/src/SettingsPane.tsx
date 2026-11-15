@@ -150,7 +150,7 @@ export function SettingsPane({
         setLaunchConflicts((current) =>
           current.filter((status) => status.action !== action),
         );
-        onSettingsSaved(outcome.mirror);
+        onSettingsSaved(outcome.mirror.settings);
       } finally {
         setBusy(false);
       }
@@ -190,7 +190,7 @@ export function SettingsPane({
         setPairNotice(outcome.problem);
         return;
       }
-      onSettingsSaved(outcome.mirror);
+      onSettingsSaved(outcome.mirror.settings);
       setPairNotice(outcome.notice);
     } finally {
       setBusy(false);
@@ -208,7 +208,7 @@ export function SettingsPane({
         setResetNotice(outcome.problem);
         return;
       }
-      onSettingsSaved(outcome.mirror);
+      onSettingsSaved(outcome.mirror.settings);
       setProblems({});
       setResetNotice(outcome.notice);
       setConfirmReset(false);
