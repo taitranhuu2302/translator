@@ -28,6 +28,7 @@ const CAPTURE_CASES: CaptureError[] = [
 
 /** One of every EngineError variant the wire can deliver. */
 const ENGINE_ERRORS: EngineError[] = [
+  "nothing_to_translate",
   ...CAPTURE_CASES.map((capture) => ({ capture })),
   { provider: "not_configured" },
   { provider: "offline" },
@@ -169,5 +170,14 @@ describe("the engine notice", () => {
     const notice = noticeFor({ speech: { no_voice: { language: "fr" } } });
 
     expect(notice.kind).toBe("error");
+  });
+
+  it("words the blank rule once and offers no action", () => {
+    const notice = noticeFor("nothing_to_translate");
+
+    expect(notice.kind).toBe("capture");
+    expect(notice.title).toBe("There is nothing to translate.");
+    expect(notice.detail).toBe("Select or type some text, then try again.");
+    expect(notice.action).toBeUndefined();
   });
 });

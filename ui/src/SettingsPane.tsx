@@ -3,7 +3,6 @@ import { useCallback, useEffect, useState } from "react";
 import { formatShortcut } from "./format";
 import {
   ipc,
-  type ResetOutcome,
   type Settings,
   type ShortcutAction,
   type ShortcutStatus,
@@ -13,13 +12,9 @@ import {
   directionSentence,
   languageName,
   OFFERED_LANGUAGES,
-  withTarget,
 } from "./settingsView";
-import { captureBinding, withShortcut, type KeyPress } from "./shortcuts";
-
-/** What a rebind says when the shell could not carry it out at all, rather
- * than the engine answering with its own typed refusal. */
-const REBIND_FAILED = "The shortcut could not be changed.";
+import { captureBinding, type KeyPress } from "./shortcuts";
+import { settingsWriter } from "./settingsWrite";
 
 /** The four actions, named the way the engine names them in its messages. */
 const ACTIONS: { action: ShortcutAction; label: string; description: string }[] =
@@ -134,37 +129,33 @@ export function SettingsPane({
       setRecording(null);
       setBusy(true);
       try {
-        const result = await ipc.rebindShortcut(action, binding);
-        if (result.problem) {
-          setProblems((current) => ({
-            ...current,
-            [action]: result.problem ?? REBIND_FAILED,
-          }));
-        } else {
-          // Only a binding that is both live and saved enters the view: what is
-          // shown and what relaunching will restore are the same thing.
-          setProblems((current) => {
-            const next = { ...current };
-            delete next[action];
-            return next;
-          });
-          // The shell drops this action's launch refusal when the rebind is
-          // saved; mirror that instead of re-showing a refusal that is gone.
-          setLaunchConflicts((current) =>
-            current.filter((status) => status.action !== action),
-          );
-          onSettingsSaved(withShortcut(settings, action, result.binding));
+        const outcome = await settingsWriter.change({
+          kind: "rebind",
+          action,
+          binding,
+        });
+        if (outcome.mirror === null) {
+          setProblems((current) => ({ ...current, [action]: outcome.problem }));
+          return;
         }
-      } catch {
-        setProblems((current) => ({
-          ...current,
-          [action]: REBIND_FAILED,
-        }));
+        // Only a binding that is both live and saved enters the view: what is
+        // shown and what relaunching will restore are the same thing.
+        setProblems((current) => {
+          const next = { ...current };
+          delete next[action];
+          return next;
+        });
+        // The shell drops this action's launch refusal when the rebind is
+        // saved; mirror that instead of re-showing a refusal that is gone.
+        setLaunchConflicts((current) =>
+          current.filter((status) => status.action !== action),
+        );
+        onSettingsSaved(outcome.mirror);
       } finally {
         setBusy(false);
       }
     },
-    [onSettingsSaved, settings],
+    [onSettingsSaved],
   );
 
   // Press-to-record: while an action is listening, the next combination is the
@@ -191,19 +182,16 @@ export function SettingsPane({
   }, [recording, applyRebind]);
 
   const savePair = async (target: string) => {
-    const next = {
-      ...settings,
-      language_pair: withTarget(settings.language_pair, target),
-    };
-    if (next.language_pair === settings.language_pair) return;
     setBusy(true);
     setPairNotice(null);
     try {
-      await ipc.saveSettings(next);
-      onSettingsSaved(next);
-      setPairNotice("Language pair saved.");
-    } catch {
-      setPairNotice("The language pair could not be saved.");
+      const outcome = await settingsWriter.change({ kind: "target", target });
+      if (outcome.mirror === null) {
+        setPairNotice(outcome.problem);
+        return;
+      }
+      onSettingsSaved(outcome.mirror);
+      setPairNotice(outcome.notice);
     } finally {
       setBusy(false);
     }
@@ -214,17 +202,16 @@ export function SettingsPane({
     setResetNotice(null);
     setResetProblems([]);
     try {
-      const outcome: ResetOutcome = await ipc.resetShortcutsAndLanguagePair();
-      onSettingsSaved(outcome.settings);
+      const outcome = await settingsWriter.change({ kind: "reset" });
+      setResetProblems(outcome.refusals);
+      if (outcome.mirror === null) {
+        setResetNotice(outcome.problem);
+        return;
+      }
+      onSettingsSaved(outcome.mirror);
       setProblems({});
-      setResetProblems(refusals(outcome.bindings));
-      setResetNotice(
-        outcome.save_problem ??
-          "Shortcuts and language pair put back to the shipped settings.",
-      );
+      setResetNotice(outcome.notice);
       setConfirmReset(false);
-    } catch {
-      setResetNotice("The shipped settings could not be restored.");
     } finally {
       setBusy(false);
       // A reset clears every launch refusal; read the list back rather than
@@ -392,14 +379,6 @@ export function SettingsPane({
       </section>
     </div>
   );
-}
-
-/** macOS refusals happen one binding at a time; each one is reported, so the
- * user knows exactly which shortcut is not live. */
-function refusals(bindings: ShortcutStatus[]): string[] {
-  return bindings
-    .filter((status) => status.problem !== null)
-    .map((status) => status.problem ?? "");
 }
 
 /** The name the Settings rows and the launch warning share for an action. */
