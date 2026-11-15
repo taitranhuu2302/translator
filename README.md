@@ -41,18 +41,26 @@ See [ADR-0001](docs/adr/0001-rust-core-with-tauri-shell.md) for the stack and [A
 
 ## Build
 
+Run these from the repository root. `npm install` installs the root tooling and the `ui` workspace through one lockfile; the npm commands cover the UI.
+
 ```bash
-./scripts/test.sh     # frontend typecheck and build, IPC boundary check, cargo test
+npm install           # once
+npm test              # UI tests
+npm run build         # build ui/dist
+
+./scripts/test.sh     # typecheck, UI tests and build, IPC boundary check, cargo test
 ./scripts/build.sh    # build the frontend and the app, then sign target/bundle/Translator.app
 ```
 
-`scripts/build.sh` packages a real `.app` with `LSUIElement` and signs it with the stable local identity; it refuses to package unsigned or ad-hoc. See [ADR-0004](docs/adr/0004-stable-signing-from-first-commit.md).
+The per-package commands (`npm --prefix ui run test`, `npm --prefix ui run build`) still work for a fast loop on the UI alone.
+
+`scripts/build.sh` packages a real `.app` with `LSUIElement` and signs it with the stable local identity; it refuses to package unsigned, ad-hoc, or with the frontend placeholder still in `ui/dist`. See [ADR-0004](docs/adr/0004-stable-signing-from-first-commit.md).
 
 ## Develop
 
 ```bash
-npm install           # once: pulls @tauri-apps/cli
-npx tauri dev         # vite on :1420 with HMR, the webview talks to the real engine`
+npm install           # once, at the repository root
+npx tauri dev         # vite on :1420 with HMR, the webview talks to the real engine
 ```
 
 `tauri dev` runs the unsigned `target/debug/translator`, so the Accessibility grant does not apply: Selection capture and the non-activating popup only behave under `scripts/build.sh`. The production build turns on the `custom-protocol` feature, which is what embeds `ui/dist` rather than loading the dev server.

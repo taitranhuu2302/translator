@@ -6,9 +6,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if [ ! -d ui/node_modules ]; then
-  echo "==> installing frontend dependencies"
-  npm --prefix ui ci --no-audit --no-fund
+if [ ! -d node_modules ]; then
+  echo "==> installing workspace dependencies"
+  npm ci --no-audit --no-fund
 fi
 
 echo "==> frontend typecheck"

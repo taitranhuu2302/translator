@@ -19,16 +19,24 @@ if ! security find-identity -v -p codesigning | grep -qF "\"$IDENTITY\""; then
   exit 1
 fi
 
-if [ ! -d ui/node_modules ]; then
-  echo "==> installing frontend dependencies"
-  npm --prefix ui ci --no-audit --no-fund
+if [ ! -d node_modules ]; then
+  echo "==> installing workspace dependencies"
+  npm ci --no-audit --no-fund
 fi
 
 echo "==> building frontend"
 npm --prefix ui run build
 
-if grep -q "translator-ui-placeholder" ui/dist/index.html; then
-  echo "error: ui/dist still holds the compile-time placeholder; refusing to package." >&2
+# The placeholder is the frontend's compile-time stand-in, written by
+# crates/app/build.rs. Its marker is authored once in ui/placeholder-marker.txt,
+# which the app build also reads, so this check cannot name a different value.
+PLACEHOLDER_MARKER="$(cat ui/placeholder-marker.txt)"
+if [ -z "$PLACEHOLDER_MARKER" ]; then
+  echo "error: ui/placeholder-marker.txt is empty; cannot tell whether the frontend was built." >&2
+  exit 1
+fi
+if grep -qF "$PLACEHOLDER_MARKER" ui/dist/index.html; then
+  echo "error: ui/dist still holds the compile-time placeholder (\"$PLACEHOLDER_MARKER\"); refusing to package." >&2
   exit 1
 fi
 
