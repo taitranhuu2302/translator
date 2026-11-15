@@ -8,7 +8,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 IDENTITY="${TRANSLATOR_SIGNING_IDENTITY:-Translator Local Signing}"
-BUNDLE_ID="com.taitran.translator"
 APP_NAME="Translator"
 CERTIFICATE_ROOT="0210dfaace23b661886724d8588f09a5ee30882b"
 APP="target/bundle/$APP_NAME.app"
@@ -19,16 +18,31 @@ if ! security find-identity -v -p codesigning | grep -qF "\"$IDENTITY\""; then
   exit 1
 fi
 
-if [ ! -d ui/node_modules ]; then
-  echo "==> installing frontend dependencies"
-  npm --prefix ui ci --no-audit --no-fund
+# Identity has one authoring point (packaging/Info.plist for the identifier,
+# Cargo.toml for the version). Fail before spending a build on a tree whose
+# Tauri config and plist disagree, since the signed identifier would silently
+# lose the Accessibility grant.
+./scripts/check-identity.sh
+BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' packaging/Info.plist)"
+
+if [ ! -d node_modules ]; then
+  echo "==> installing workspace dependencies"
+  npm ci --no-audit --no-fund
 fi
 
 echo "==> building frontend"
 npm --prefix ui run build
 
-if grep -q "translator-ui-placeholder" ui/dist/index.html; then
-  echo "error: ui/dist still holds the compile-time placeholder; refusing to package." >&2
+# The placeholder is the frontend's compile-time stand-in, written by
+# crates/app/build.rs. Its marker is authored once in ui/placeholder-marker.txt,
+# which the app build also reads, so this check cannot name a different value.
+PLACEHOLDER_MARKER="$(cat ui/placeholder-marker.txt)"
+if [ -z "$PLACEHOLDER_MARKER" ]; then
+  echo "error: ui/placeholder-marker.txt is empty; cannot tell whether the frontend was built." >&2
+  exit 1
+fi
+if grep -qF "$PLACEHOLDER_MARKER" ui/dist/index.html; then
+  echo "error: ui/dist still holds the compile-time placeholder (\"$PLACEHOLDER_MARKER\"); refusing to package." >&2
   exit 1
 fi
 
@@ -45,15 +59,10 @@ cp packaging/Info.plist "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # TCC keys the Accessibility grant to the bundle identifier, and the designated
-# requirement pins $BUNDLE_ID. If the plist and the signing identity drift apart
-# the app registers under one id and is required under another, and the grant
-# this script exists to protect is silently lost.
+# requirement pins $BUNDLE_ID. The identifier above was read from this same
+# plist, and `check-identity.sh` already held the Tauri config to it, so there is
+# no second copy left to compare.
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
-PLIST_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")"
-if [ "$PLIST_BUNDLE_ID" != "$BUNDLE_ID" ]; then
-  echo "error: packaging/Info.plist declares $PLIST_BUNDLE_ID, but the bundle is signed as $BUNDLE_ID." >&2
-  exit 1
-fi
 PLIST_EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
 if [ "$PLIST_EXECUTABLE" != "translator" ]; then
   echo "error: packaging/Info.plist declares CFBundleExecutable $PLIST_EXECUTABLE, expected translator." >&2

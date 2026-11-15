@@ -1,23 +1,18 @@
-//! Rebindable global shortcuts: whether a combination can be used, and the one
-//! place that turns a binding into a live registration and a saved setting.
+//! Rebindable global shortcuts: whether a combination can be used, and the pure
+//! planning half that turns a request into a [`Plan`].
 //!
+//! The apply half — register, release, route, save, roll back — lives in the
+//! shell's workflow seam (`workflows.rs`), because it needs the platform ports.
 //! `main.rs` owns the process-wide state (the live routes and the tray item);
-//! the rules live here so they are testable without a window, a Carbon hotkey or
-//! a settings file.
-
-use std::time::Duration;
+//! the rules here are testable without a window, a Carbon hotkey or a settings
+//! file.
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 use translator_core::{LanguagePair, Settings, ShortcutBindings};
 
 use crate::main_thread::on_main_thread;
-use crate::{tray, AppState};
-
-/// Shortcut registrations and menu swaps are AppKit work posted to the main
-/// thread; the caller waits this long for the answer before reporting failure.
-const MAIN_THREAD_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// What a combination that cannot be used says. It never guesses why.
 pub const INVALID_BINDING: &str = "That combination cannot be used as a shortcut.";
@@ -70,7 +65,7 @@ impl ShortcutAction {
         }
     }
 
-    fn with_binding(self, bindings: &mut ShortcutBindings, value: String) {
+    pub(crate) fn with_binding(self, bindings: &mut ShortcutBindings, value: String) {
         match self {
             ShortcutAction::QuickTranslate => bindings.quick_translate = value,
             ShortcutAction::Replace => bindings.replace = value,
@@ -237,7 +232,7 @@ fn has_modifier(shortcut: &Shortcut) -> bool {
 
 /// Compare the combination, not the plugin's registration id, which is derived
 /// the same way but is not what the user chose.
-fn is_the_same(one: &Shortcut, other: &Shortcut) -> bool {
+pub(crate) fn is_the_same(one: &Shortcut, other: &Shortcut) -> bool {
     one.mods == other.mods && one.key == other.key
 }
 
@@ -308,81 +303,6 @@ pub fn register_binding(app: &AppHandle, binding: &str) -> Option<Shortcut> {
     }
 }
 
-/// Apply one rebind: decide, register on the main thread, unregister what it
-/// replaces, then save. A save that fails puts the old registration back, so a
-/// binding never works now and vanishes at relaunch.
-pub fn rebind_shortcut(
-    app: &AppHandle,
-    action: ShortcutAction,
-    requested: &str,
-) -> Result<RebindResult, ()> {
-    let state = app.state::<AppState>();
-    let mut settings = state.engine.settings().map_err(|_| ())?;
-
-    let plan = plan(action, requested, &settings.shortcuts);
-    if let Some(problem) = problem_message(&plan) {
-        return Ok(RebindResult {
-            binding: plan.binding().to_owned(),
-            problem: Some(problem),
-        });
-    }
-
-    let (binding, shortcut, previous) = match plan {
-        Plan::Unchanged { binding } => {
-            return Ok(RebindResult {
-                binding,
-                problem: None,
-            })
-        }
-        Plan::Apply {
-            binding,
-            shortcut,
-            previous,
-        } => (binding, shortcut, previous),
-        Plan::Invalid { .. } | Plan::InUse { .. } => {
-            unreachable!("a plan with a problem returned above")
-        }
-    };
-
-    let live = state.route_for(action);
-    if let Err(error) = register_on_main_thread(app, shortcut) {
-        eprintln!("Translator: could not register {binding}: {error}");
-        return Ok(RebindResult {
-            binding: binding.clone(),
-            problem: Some(refused_message(&binding)),
-        });
-    }
-
-    if let Some(old) = live.or(previous) {
-        if !is_the_same(&old, &shortcut) {
-            unregister_on_main_thread(app, old);
-        }
-    }
-    state.set_route(action, Some(shortcut));
-
-    action.with_binding(&mut settings.shortcuts, binding.clone());
-    let shortcuts = settings.shortcuts.clone();
-    if state.engine.save_settings(settings).is_err() {
-        unregister_on_main_thread(app, shortcut);
-        let restored = match previous {
-            Some(old) if register_on_main_thread(app, old).is_ok() => Some(old),
-            _ => None,
-        };
-        state.set_route(action, restored);
-        return Ok(RebindResult {
-            binding,
-            problem: Some(SAVE_FAILED.to_owned()),
-        });
-    }
-
-    state.forget_conflict(action);
-    tray::refresh_tray(app, &shortcuts);
-    Ok(RebindResult {
-        binding,
-        problem: None,
-    })
-}
-
 /// One action's outcome after a reset.
 #[derive(Clone, Debug, Serialize)]
 pub struct ShortcutStatus {
@@ -412,71 +332,11 @@ pub fn settings_after_reset(current: &Settings) -> Settings {
     }
 }
 
-/// Restore the four shipped shortcuts and the default pair. Every live shortcut
-/// is unregistered first, so a shipped combination that a previous binding
-/// occupied is free. A binding macOS refuses is reported, not skipped.
-pub fn reset_shortcuts_and_language_pair(app: &AppHandle) -> Result<ResetOutcome, ()> {
-    let state = app.state::<AppState>();
-    let current = state.engine.settings().map_err(|_| ())?;
-
-    for action in ShortcutAction::ALL {
-        if let Some(live) = state.route_for(action) {
-            unregister_on_main_thread(app, live);
-        }
-        state.set_route(action, None);
-    }
-
-    let defaults = ShortcutBindings::default();
-    let mut bindings = Vec::new();
-    for action in ShortcutAction::ALL {
-        let binding = action.binding(&defaults).to_owned();
-        let problem = match binding.parse::<Shortcut>() {
-            Ok(shortcut) => match register_on_main_thread(app, shortcut) {
-                Ok(()) => {
-                    state.set_route(action, Some(shortcut));
-                    None
-                }
-                Err(error) => {
-                    eprintln!("Translator: could not register {binding}: {error}");
-                    Some(refused_message(&binding))
-                }
-            },
-            Err(_) => Some(INVALID_BINDING.to_owned()),
-        };
-        bindings.push(ShortcutStatus {
-            action,
-            binding,
-            problem,
-        });
-    }
-
-    state.clear_conflicts();
-    tray::refresh_tray(app, &defaults);
-
-    let settings = settings_after_reset(&current);
-    let save_problem = state
-        .engine
-        .save_settings(settings.clone())
-        .err()
-        .map(|error| {
-            format!(
-            "The defaults are live, but the settings file could not be written, so relaunching \
-             restores the old settings: {error}"
-        )
-        });
-
-    Ok(ResetOutcome {
-        settings,
-        bindings,
-        save_problem,
-    })
-}
-
 /// Register on the main thread and wait for the answer: Carbon registration
 /// belongs there, and the caller must know whether it succeeded before it
 /// unregisters what the new combination replaces.
 fn register_on_main_thread(app: &AppHandle, shortcut: Shortcut) -> Result<(), String> {
-    match on_main_thread(app, MAIN_THREAD_TIMEOUT, move |handle| {
+    match on_main_thread(app, move |handle| {
         handle
             .global_shortcut()
             .register(shortcut)
@@ -484,24 +344,6 @@ fn register_on_main_thread(app: &AppHandle, shortcut: Shortcut) -> Result<(), St
     }) {
         Some(result) => result,
         None => Err("the main thread did not answer".to_owned()),
-    }
-}
-
-fn unregister_on_main_thread(app: &AppHandle, shortcut: Shortcut) {
-    let outcome = on_main_thread(app, MAIN_THREAD_TIMEOUT, move |handle| {
-        handle
-            .global_shortcut()
-            .unregister(shortcut)
-            .map_err(|error| error.to_string())
-    });
-    match outcome {
-        Some(Ok(())) => {}
-        Some(Err(error)) => {
-            eprintln!("Translator: {shortcut} was not unregistered: {error}")
-        }
-        None => {
-            eprintln!("Translator: {shortcut} was not unregistered: the main thread did not answer")
-        }
     }
 }
 

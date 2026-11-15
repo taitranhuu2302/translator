@@ -7,6 +7,7 @@ mod main_thread;
 mod panel;
 mod shortcuts;
 mod tray;
+mod workflows;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -14,10 +15,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use frame::{Frame, FrameStore, ScreenRect};
-use serde::Serialize;
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 use translator_core::{
@@ -35,13 +34,13 @@ use translator_platform_macos::{
 /// How many translations the in-memory cache remembers.
 const TRANSLATION_CACHE_SIZE: usize = 100;
 
-/// How long a panel operation waits for the main thread before giving up.
-const PANEL_TIMEOUT: Duration = Duration::from_secs(1);
-
 struct AppState {
     /// Shared so a command can hold it across an awaits-free worker hop while
     /// the borrow of `State` ends.
     engine: Arc<TranslatorEngine>,
+    /// The same store the engine holds, for the shell workflows that change a
+    /// preference beside a platform state.
+    settings: Arc<dyn SettingsStore>,
     /// The Selection captured when the window was opened, waiting for the UI to
     /// take it. Capture happens before the window is shown, while the app the
     /// user was typing in still has focus.
@@ -167,15 +166,36 @@ async fn quick_translate(state: State<'_, AppState>) -> Result<QuickTranslation,
 
 #[tauri::command]
 async fn replace_selection(state: State<'_, AppState>) -> Result<Replacement, EngineError> {
-    state.engine.replace_selection()
+    let engine = Arc::clone(&state.engine);
+    // No popup is part of this path — `⌃⌥R` translates and replaces without one
+    // — so the workflow has nothing to hide or bring back.
+    replace_result(workflows::replace(None, || engine.replace_selection()))
+}
+
+/// Turn the workflow's outcome into the command's answer. A popup that could
+/// not be brought back is logged here, apart from the Replace failure it
+/// followed, rather than being folded into (or replacing) that error.
+fn replace_result(outcome: workflows::ReplaceOutcome) -> Result<Replacement, EngineError> {
+    match outcome {
+        workflows::ReplaceOutcome::Replaced(replacement) => Ok(replacement),
+        workflows::ReplaceOutcome::Failed { error, restore } => {
+            if let workflows::PopupRestore::Failed(problem) = restore {
+                eprintln!(
+                    "Translator: the popup could not be shown after a failed Replace: {problem}"
+                );
+            }
+            Err(error)
+        }
+    }
 }
 
 /// The popup's Enter: Replace the Selection with the translation already on
 /// screen, without capturing or translating again.
 ///
-/// The panel holds the keyboard while it is shown, so the clipboard fallback's
-/// synthesized ⌘V would land in our own page. It is hidden first, and shown
-/// again if the write fails so the popup can explain the failure inline.
+/// The hide → Replace → restore order lives in `workflows::replace`. The panel
+/// holds the keyboard while it is shown, so the clipboard fallback's synthesized
+/// ⌘V would land in our own page; the workflow hides it first and shows it again
+/// if the write fails so the popup can explain the failure inline.
 #[tauri::command]
 async fn replace_with_translation(
     app: AppHandle,
@@ -184,19 +204,19 @@ async fn replace_with_translation(
     translation: Translation,
 ) -> Result<Replacement, EngineError> {
     let engine = Arc::clone(&state.engine);
-
-    main_thread::on_main_thread(&app, PANEL_TIMEOUT, panel::hide);
-    match engine.replace_with_translation(&source_text, translation) {
-        Ok(replacement) => Ok(replacement),
-        Err(error) => {
-            main_thread::on_main_thread(&app, PANEL_TIMEOUT, move |handle| {
-                if let Err(show_error) = panel::show(handle) {
-                    eprintln!(
-                        "Translator: the popup could not be shown after a failed Replace: {show_error}"
-                    );
-                }
-            });
-            Err(error)
+    let outcome = main_thread::on_main_thread(&app, move |handle| {
+        workflows::replace(
+            Some(&workflows::ShellPanelPresenter::new(handle.clone())),
+            || engine.replace_with_translation(&source_text, translation),
+        )
+    });
+    match outcome {
+        Some(outcome) => replace_result(outcome),
+        None => {
+            eprintln!("Translator: Replace did not run: the main thread did not answer");
+            Err(EngineError::Capture(CaptureError::Unavailable {
+                reason: "the main thread did not answer, so nothing was replaced".to_owned(),
+            }))
         }
     }
 }
@@ -337,9 +357,7 @@ async fn take_popup_prefill(state: State<'_, AppState>) -> Result<Option<PopupPr
 /// Dismiss the popup. Panel operations must run on the main thread.
 #[tauri::command]
 async fn hide_popup(app: AppHandle) -> Result<(), ()> {
-    let handle = app.clone();
-    app.run_on_main_thread(move || panel::hide(&handle))
-        .map_err(|_| ())
+    main_thread::on_main_thread(&app, panel::hide).map_or(Err(()), |()| Ok(()))
 }
 
 /// The popup's Copy button. Writing through AppKit does not depend on the web
@@ -404,15 +422,17 @@ fn open_quick_translate(app: &AppHandle) {
         let prefill = app.state::<AppState>().engine.popup_prefill();
         app.state::<AppState>().put_popup_prefill(prefill);
 
-        let handle = app.clone();
-        if let Err(error) = app.run_on_main_thread(move || {
-            if let Err(error) = panel::show(&handle) {
+        let shown = main_thread::on_main_thread(&app, move |handle| {
+            if let Err(error) = panel::show(handle) {
                 eprintln!("Translator: the Quick Translate popup could not open: {error}");
                 return;
             }
             let _ = handle.emit_to(panel::POPUP_LABEL, panel::POPUP_PREFILL_EVENT, ());
-        }) {
-            eprintln!("Translator: the Quick Translate popup could not be scheduled: {error}");
+        });
+        if shown.is_none() {
+            eprintln!(
+                "Translator: the Quick Translate popup could not be shown: the main thread did not answer"
+            );
         }
     });
 }
@@ -583,19 +603,28 @@ fn read_aloud_selection(app: &AppHandle) {
 }
 
 /// Replace (`⌃⌥R`): capture, translate and write in one step, off the main
-/// thread so a slow provider never freezes the app. There is no popup to carry
-/// a failure, so every typed failure gets a dialog — a Replace that did nothing
-/// must never look like it worked.
+/// thread so a slow provider never freezes the app. It runs through the same
+/// workflow as the popup's Replace, with no popup to hide or restore. There is
+/// no popup to carry a failure either, so every typed failure gets a dialog — a
+/// Replace that did nothing must never look like it worked.
 fn replace_selection_directly(app: &AppHandle) {
     let app = app.clone();
-    std::thread::spawn(
-        move || match app.state::<AppState>().engine.replace_selection() {
-            Ok(_) => {}
-            Err(error) => show_replace_failure(&app, &error),
-        },
-    );
+    std::thread::spawn(move || {
+        let engine = Arc::clone(&app.state::<AppState>().engine);
+        if let workflows::ReplaceOutcome::Failed { error, .. } =
+            workflows::replace(None, || engine.replace_selection())
+        {
+            show_replace_failure(&app, &error);
+        }
+    });
 }
 
+/// This native dialog is a shell surface, not one of the two UI surfaces the
+/// capture-notice model is scoped to, so it owns its own copy deliberately: it
+/// cannot draw a TypeScript model, and its sentences name what this operation
+/// did ("nothing was replaced") rather than restating the popup's notice. The
+/// catch-all arm keeps a newly added `CaptureError` variant handled here until
+/// this dialog gives it words of its own.
 fn show_replace_failure(app: &AppHandle, error: &EngineError) {
     eprintln!("Translator: Replace failed: {error}");
     let message = match error {
@@ -643,118 +672,100 @@ fn show_read_aloud_failure(app: &AppHandle, error: &EngineError) {
 }
 
 /// Apply one shortcut change. The rules — invalid, already in use, no change,
-/// macOS refusing, the settings file refusing — live in `shortcuts.rs`; the
-/// command only carries the window's request and answers what happened.
+/// macOS refusing, the settings file refusing — live in `shortcuts.rs` and the
+/// apply order in `workflows.rs`; the command only hops to the main thread and
+/// refreshes the tray once the hop has returned.
 #[tauri::command]
 async fn rebind_shortcut(
     app: AppHandle,
+    state: State<'_, AppState>,
     action: shortcuts::ShortcutAction,
     binding: String,
 ) -> Result<shortcuts::RebindResult, ()> {
-    shortcuts::rebind_shortcut(&app, action, &binding)
+    let settings = Arc::clone(&state.settings);
+    let outcome = main_thread::on_main_thread(&app, move |handle| {
+        workflows::rebind_shortcut(
+            &workflows::ShellKeyRegistry::new(handle.clone()),
+            &workflows::ShellShortcutRoute::new(handle.clone()),
+            settings.as_ref(),
+            action,
+            &binding,
+        )
+    });
+    let outcome = match outcome {
+        Some(Ok(outcome)) => outcome,
+        Some(Err(())) => return Err(()),
+        None => {
+            eprintln!("Translator: the shortcut change did not run: the main thread did not answer");
+            return Err(());
+        }
+    };
+    if outcome.applied {
+        app.state::<AppState>().forget_conflict(action);
+        tray::refresh_tray(&app, &outcome.settings.shortcuts);
+    }
+    Ok(shortcuts::RebindResult {
+        binding: outcome.binding,
+        problem: outcome.problem,
+    })
 }
 
 /// Put the shipped shortcuts and the default pair back. History and provider
-/// keys are not touched.
+/// keys are not touched. The reset reuses the apply sequence; the command only
+/// clears the launch conflicts and refreshes the tray once the hop has returned.
 #[tauri::command]
-async fn reset_shortcuts_and_language_pair(app: AppHandle) -> Result<shortcuts::ResetOutcome, ()> {
-    shortcuts::reset_shortcuts_and_language_pair(&app)
+async fn reset_shortcuts_and_language_pair(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<shortcuts::ResetOutcome, ()> {
+    let settings = Arc::clone(&state.settings);
+    let outcome = main_thread::on_main_thread(&app, move |handle| {
+        workflows::reset_shortcuts(
+            &workflows::ShellKeyRegistry::new(handle.clone()),
+            &workflows::ShellShortcutRoute::new(handle.clone()),
+            settings.as_ref(),
+        )
+    });
+    let outcome = match outcome {
+        Some(Ok(outcome)) => outcome,
+        Some(Err(())) => return Err(()),
+        None => {
+            eprintln!("Translator: the shortcuts were not reset: the main thread did not answer");
+            return Err(());
+        }
+    };
+    app.state::<AppState>().clear_conflicts();
+    tray::refresh_tray(&app, &outcome.settings.shortcuts);
+    Ok(outcome)
 }
 
-/// What changing the login item left behind. `enabled` is the plugin's actual
-/// state, `settings` what the engine now holds, and `problem` a sentence when
-/// the change could not be made or persisted. The command never fails with a
-/// bare `()`, so the surface can always show what is true.
-#[derive(Serialize)]
-struct StartAtLoginOutcome {
-    enabled: bool,
-    settings: Settings,
-    problem: Option<String>,
-}
-
-/// The login item's actual state, asked of the plugin rather than read from the
+/// The login item's actual state, asked of the system rather than read from the
 /// settings file.
 #[tauri::command]
 async fn start_at_login_enabled(app: AppHandle) -> Result<bool, ()> {
-    app.autolaunch().is_enabled().map_err(|error| {
+    workflows::LoginItem::is_enabled(&workflows::ShellLoginItem::new(app)).map_err(|error| {
         eprintln!("Translator: the login item state could not be read: {error}");
     })
 }
 
-/// Enable or disable the login item and save the preference. Loading the
-/// settings first means a file that cannot be read refuses the change before
-/// anything is touched. A failed write rolls the login item back, so what the
-/// file says and what macOS does never disagree after a relaunch.
+/// The read → change → save → roll-back order lives in the workflow; the
+/// command only hops to the main thread and maps the result.
 #[tauri::command]
 async fn set_start_at_login(
     app: AppHandle,
     state: State<'_, AppState>,
     enabled: bool,
-) -> Result<StartAtLoginOutcome, ()> {
-    let autolaunch = app.autolaunch();
-    let mut settings = match state.engine.settings() {
-        Ok(settings) => settings,
-        Err(error) => {
-            eprintln!("Translator: the login item was not changed: {error}");
-            return Ok(StartAtLoginOutcome {
-                enabled: autolaunch.is_enabled().unwrap_or(false),
-                settings: Settings::default(),
-                problem: Some(
-                    "The login item was not changed: the settings file could not be read."
-                        .to_owned(),
-                ),
-            });
-        }
-    };
-
-    let previous = settings.start_at_login;
-    let change = if enabled {
-        autolaunch.enable()
-    } else {
-        autolaunch.disable()
-    };
-    if let Err(error) = change {
-        eprintln!("Translator: the login item was not changed: {error}");
-        return Ok(StartAtLoginOutcome {
-            enabled: autolaunch.is_enabled().unwrap_or(settings.start_at_login),
-            settings,
-            problem: Some(
-                "Translator could not change the login item; it was left as it was.".to_owned(),
-            ),
-        });
-    }
-
-    settings.start_at_login = enabled;
-    if let Err(error) = state.engine.save_settings(settings.clone()) {
-        eprintln!("Translator: the login item change could not be saved: {error}");
-        // Put back whatever the file still says, which is the value loaded
-        // above, not simply the opposite of the requested one.
-        let reverted = if previous {
-            autolaunch.enable()
-        } else {
-            autolaunch.disable()
-        };
-        let problem = match reverted {
-            Ok(()) => {
-                "The login item was changed back because the settings file could not be written."
-                    .to_owned()
-            }
-            Err(revert_error) => format!(
-                "The settings file could not be written and the login item could not be changed back: {revert_error}"
-            ),
-        };
-        settings.start_at_login = previous;
-        return Ok(StartAtLoginOutcome {
-            enabled: autolaunch.is_enabled().unwrap_or(previous),
-            settings,
-            problem: Some(problem),
-        });
-    }
-
-    Ok(StartAtLoginOutcome {
-        enabled: autolaunch.is_enabled().unwrap_or(enabled),
-        settings,
-        problem: None,
+) -> Result<workflows::StartAtLoginOutcome, ()> {
+    let settings = Arc::clone(&state.settings);
+    let outcome = main_thread::on_main_thread(&app, move |handle| {
+        workflows::set_start_at_login(
+            &workflows::ShellLoginItem::new(handle.clone()),
+            settings.as_ref(),
+            enabled,
+        )
+    });
+    outcome.ok_or_else(|| {
+        eprintln!("Translator: the login item change did not run: the main thread did not answer");
     })
 }
 
@@ -811,7 +822,7 @@ fn main() {
     // from settings per request: changing it takes effect without a restart.
     let http = Arc::new(UreqHttpClient::default());
     let credentials = Arc::new(MacCredentialStore);
-    let settings_store = Arc::new(MacSettingsStore::default());
+    let settings_store: Arc<dyn SettingsStore> = Arc::new(MacSettingsStore::default());
     let region_settings = Arc::clone(&settings_store);
     let azure = Arc::new(AzureProvider::new(
         http.clone(),
@@ -840,7 +851,7 @@ fn main() {
         provider,
         Arc::new(MacSpeechOutput),
         Arc::new(MacHistoryStore::default()),
-        settings_store,
+        Arc::clone(&settings_store),
         credentials,
     );
 
@@ -866,6 +877,7 @@ fn main() {
         )
         .manage(AppState {
             engine: Arc::new(engine),
+            settings: settings_store,
             prefill: Mutex::new(None),
             popup_prefill: Mutex::new(None),
             routes: Mutex::new(shortcuts::ShortcutRoutes::default()),

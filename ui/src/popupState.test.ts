@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { AnswerToken } from "./answerToken";
 import type { Translation } from "./ipc";
 import { noticeFor, noticeForCapture } from "./notice";
 import { OPENING, reduce } from "./popupState";
@@ -11,23 +12,32 @@ const translation: Translation = {
   target: "en",
 };
 
+/** The token one opening of the panel issues for its translation. */
+const token: AnswerToken = { session: 1, sequence: 1 };
+
+function opened(text: string, at: AnswerToken = token) {
+  return reduce(OPENING, {
+    type: "prefill",
+    prefill: { selection: { text } },
+    token: at,
+  });
+}
+
 describe("the Quick Translate popup", () => {
   it("shows the translating state before any answer exists", () => {
-    const state = reduce(OPENING, {
-      type: "prefill",
-      prefill: { selection: { text: "Xin chào thế giới" } },
+    expect(opened("Xin chào thế giới")).toEqual({
+      phase: "translating",
+      source: "Xin chào thế giới",
+      token,
     });
-
-    expect(state).toEqual({ phase: "translating", source: "Xin chào thế giới" });
   });
 
   it("replaces the translating state with the translation in the same popup", () => {
-    const translating = reduce(OPENING, {
-      type: "prefill",
-      prefill: { selection: { text: "Xin chào thế giới" } },
+    const translated = reduce(opened("Xin chào thế giới"), {
+      type: "translated",
+      translation,
+      token,
     });
-
-    const translated = reduce(translating, { type: "translated", translation });
 
     expect(translated).toEqual({
       phase: "translated",
@@ -43,23 +53,27 @@ describe("the Quick Translate popup", () => {
     };
 
     expect(
-      reduce(OPENING, { type: "prefill", prefill: "nothing_selected" }),
+      reduce(OPENING, {
+        type: "prefill",
+        prefill: "nothing_selected",
+        token,
+      }),
     ).toEqual(nothingSelected);
 
     expect(
-      reduce(OPENING, { type: "prefill", prefill: { selection: { text: "  \n " } } }),
+      reduce(OPENING, {
+        type: "prefill",
+        prefill: { selection: { text: "  \n " } },
+        token,
+      }),
     ).toEqual(nothingSelected);
   });
 
   it("names an offline failure as offline, not as a generic error", () => {
-    const translating = reduce(OPENING, {
-      type: "prefill",
-      prefill: { selection: { text: "Xin chào" } },
-    });
-
-    const state = reduce(translating, {
+    const state = reduce(opened("Xin chào"), {
       type: "failed",
       error: { provider: "offline" },
+      token,
     });
 
     expect(state.phase).toBe("failed");
@@ -121,6 +135,7 @@ describe("the Quick Translate popup", () => {
     const state = reduce(OPENING, {
       type: "prefill",
       prefill: { failure: "no_accessibility" },
+      token,
     });
 
     expect(state.phase).toBe("failed");
@@ -130,33 +145,100 @@ describe("the Quick Translate popup", () => {
   });
 
   it("starts over when the same panel is opened again", () => {
+    const next = { session: 2, sequence: 1 };
     const dismissed = reduce(
-      reduce(OPENING, { type: "prefill", prefill: "nothing_selected" }),
+      reduce(OPENING, {
+        type: "prefill",
+        prefill: "nothing_selected",
+        token,
+      }),
       { type: "dismissed" },
     );
 
     expect(
-      reduce(dismissed, { type: "prefill", prefill: { selection: { text: "Xin chào" } } }),
-    ).toEqual({ phase: "translating", source: "Xin chào" });
+      reduce(dismissed, {
+        type: "prefill",
+        prefill: { selection: { text: "Xin chào" } },
+        token: next,
+      }),
+    ).toEqual({ phase: "translating", source: "Xin chào", token: next });
 
-    const answered = reduce(reduce(OPENING, {
-      type: "prefill",
-      prefill: { selection: { text: "Xin chào" } },
-    }), { type: "translated", translation });
+    const answered = reduce(opened("Xin chào"), {
+      type: "translated",
+      translation,
+      token,
+    });
 
     expect(
-      reduce(answered, { type: "prefill", prefill: { selection: { text: "Tạm biệt" } } }),
-    ).toEqual({ phase: "translating", source: "Tạm biệt" });
+      reduce(answered, {
+        type: "prefill",
+        prefill: { selection: { text: "Tạm biệt" } },
+        token: next,
+      }),
+    ).toEqual({ phase: "translating", source: "Tạm biệt", token: next });
+  });
+
+  it("drops a late answer from the open that was replaced while it was translating", () => {
+    // Both opens are translating; only the token says which answer is theirs.
+    const previous = { session: 1, sequence: 1 };
+    const reopened = { session: 2, sequence: 1 };
+    const state = reduce(opened("Xin chào", previous), {
+      type: "prefill",
+      prefill: { selection: { text: "Tạm biệt" } },
+      token: reopened,
+    });
+
+    expect(
+      reduce(state, { type: "translated", translation, token: previous }),
+    ).toEqual({ phase: "translating", source: "Tạm biệt", token: reopened });
+  });
+
+  it("accepts the reopened session's answer and ignores the one it replaced", () => {
+    const previous = { session: 1, sequence: 1 };
+    const reopened = { session: 2, sequence: 1 };
+    const state = reduce(opened("Xin chào", previous), {
+      type: "prefill",
+      prefill: { selection: { text: "Tạm biệt" } },
+      token: reopened,
+    });
+
+    const translated = reduce(state, {
+      type: "translated",
+      translation: { ...translation, text: "Goodbye" },
+      token: reopened,
+    });
+
+    expect(translated).toEqual({
+      phase: "translated",
+      source: "Tạm biệt",
+      translation: { ...translation, text: "Goodbye" },
+    });
+  });
+
+  it("drops a late failure from an open that has been replaced", () => {
+    const previous = { session: 1, sequence: 1 };
+    const reopened = { session: 2, sequence: 1 };
+    const state = reduce(opened("Xin chào", previous), {
+      type: "prefill",
+      prefill: { selection: { text: "Tạm biệt" } },
+      token: reopened,
+    });
+
+    expect(
+      reduce(state, {
+        type: "failed",
+        error: { provider: "offline" },
+        token: previous,
+      }),
+    ).toEqual({ phase: "translating", source: "Tạm biệt", token: reopened });
   });
 
   it("replaces with exactly the translation on screen and does not start over", () => {
-    const translated = reduce(
-      reduce(OPENING, {
-        type: "prefill",
-        prefill: { selection: { text: "Xin chào thế giới" } },
-      }),
-      { type: "translated", translation },
-    );
+    const translated = reduce(opened("Xin chào thế giới"), {
+      type: "translated",
+      translation,
+      token,
+    });
 
     const replacing = reduce(translated, { type: "replace_requested" });
 
@@ -168,22 +250,17 @@ describe("the Quick Translate popup", () => {
   });
 
   it("will not replace before the translation exists", () => {
-    const translating = reduce(OPENING, {
-      type: "prefill",
-      prefill: { selection: { text: "Xin chào" } },
-    });
+    const translating = opened("Xin chào");
 
     expect(reduce(translating, { type: "replace_requested" })).toEqual(translating);
   });
 
   it("keeps the popup open with an inline failure when the app refuses the replace", () => {
-    const translated = reduce(
-      reduce(OPENING, {
-        type: "prefill",
-        prefill: { selection: { text: "Xin chào" } },
-      }),
-      { type: "translated", translation },
-    );
+    const translated = reduce(opened("Xin chào"), {
+      type: "translated",
+      translation,
+      token,
+    });
     const replacing = reduce(translated, { type: "replace_requested" });
 
     const failed = reduce(replacing, {
@@ -213,15 +290,11 @@ describe("the Quick Translate popup", () => {
   });
 
   it("stays dismissed even if a slow answer lands afterwards", () => {
-    const translating = reduce(OPENING, {
-      type: "prefill",
-      prefill: { selection: { text: "Xin chào" } },
-    });
-    const dismissed = reduce(translating, { type: "dismissed" });
+    const dismissed = reduce(opened("Xin chào"), { type: "dismissed" });
 
     expect(dismissed).toEqual({ phase: "dismissed" });
-    expect(reduce(dismissed, { type: "translated", translation })).toEqual({
-      phase: "dismissed",
-    });
+    expect(
+      reduce(dismissed, { type: "translated", translation, token }),
+    ).toEqual({ phase: "dismissed" });
   });
 });

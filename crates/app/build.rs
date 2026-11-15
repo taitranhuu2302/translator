@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
-/// Marker written into the placeholder so `scripts/build.sh` can refuse to package
-/// a bundle that was compiled without the real frontend.
-const PLACEHOLDER_MARKER: &str = "<!-- translator-ui-placeholder -->";
+/// The marker `scripts/build.sh` looks for when deciding whether `ui/dist` holds
+/// the real frontend. Authored once in `ui/placeholder-marker.txt`; both this
+/// writer and that reader take the same value from there, so they cannot drift.
+const PLACEHOLDER_MARKER: &str = include_str!("../../ui/placeholder-marker.txt");
 
 fn main() {
     // `tauri::generate_context!` reads `frontendDist` at compile time, so the path
@@ -15,13 +16,15 @@ fn main() {
             dist.join("index.html"),
             format!(
                 "<!doctype html><meta charset=\"utf-8\">\
-                 <title>Translator</title>{PLACEHOLDER_MARKER}\
-                 <p>The frontend has not been built. Run `npm --prefix ui run build`.</p>"
+                 <title>Translator</title>{}\
+                 <p>The frontend has not been built. Run `npm run build`.</p>",
+                PLACEHOLDER_MARKER.trim()
             ),
         )
         .expect("writing the ui/dist placeholder");
     }
 
     println!("cargo:rerun-if-changed=../../ui/dist");
+    println!("cargo:rerun-if-changed=../../ui/placeholder-marker.txt");
     tauri_build::build()
 }

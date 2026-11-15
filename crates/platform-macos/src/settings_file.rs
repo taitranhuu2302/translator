@@ -18,10 +18,7 @@ impl MacSettingsStore {
     }
 
     pub fn default_path() -> PathBuf {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_default();
-        home.join("Library/Application Support/com.taitran.translator/settings.json")
+        crate::bundle::application_support_dir().join("settings.json")
     }
 }
 

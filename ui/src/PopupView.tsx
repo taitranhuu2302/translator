@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
+import { beginSession } from "./answerToken";
 import { providerLabel } from "./format";
 import { ipc, onPopupPrefill, type EngineError } from "./ipc";
 import { performNoticeAction } from "./noticeActions";
@@ -19,9 +20,6 @@ export function Popup() {
   /// hiding causes is ours, not the user's, and must not dismiss the answer we
   /// may still need to show a failure on.
   const replacing = useRef(false);
-  /// Identifies the current translation, so a slow answer from a previous open
-  /// cannot fill a popup that is now translating something else.
-  const session = useRef(0);
 
   const dismiss = useCallback(() => {
     if (dismissed.current) return;
@@ -48,27 +46,29 @@ export function Popup() {
       // for the same prefill; whichever loses sees null and stops here.
       if (cancelled || dismissed.current || !prefill) return;
 
-      session.current += 1;
-      const ours = session.current;
+      // Every open is its own session, so an answer still in flight from the
+      // previous open carries a token the reducer has already retired.
+      const token = beginSession().issue();
       // A prefill always starts a fresh session, so this also reopens a popup
       // that was dismissed or still showing the previous answer.
-      dispatch({ type: "prefill", prefill });
+      dispatch({ type: "prefill", prefill, token });
       if (prefill === "nothing_selected" || "failure" in prefill) return;
 
       try {
         const outcome = await ipc.translateText(prefill.selection.text, "translate");
-        if (cancelled || ours !== session.current) return;
+        if (cancelled) return;
         if ("translation" in outcome) {
-          dispatch({ type: "translated", translation: outcome.translation });
+          dispatch({ type: "translated", translation: outcome.translation, token });
         }
       } catch (error) {
-        if (cancelled || ours !== session.current) return;
-        dispatch({ type: "failed", error: error as EngineError });
+        if (cancelled) return;
+        dispatch({ type: "failed", error: error as EngineError, token });
       }
     };
 
     // A later shortcut reuses this same panel. Re-arm it and claim the new
-    // prefill; the session counter makes anything still in flight ignorable.
+    // prefill; the reducer's token rule makes anything still in flight
+    // ignorable.
     const unlisten = onPopupPrefill(() => {
       dismissed.current = false;
       replacing.current = false;
