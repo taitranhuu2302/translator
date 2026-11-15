@@ -53,9 +53,8 @@
 
 | Command | Result |
 | --- | --- |
-| `./scripts/test.sh` | exit 0 — typecheck, 11 UI files / 159 tests, production build, IPC boundary, `cargo test --workspace` (34 + 120 + 3 + 63 + 22 + 2) |
-| `npm --prefix ui run test -- src/providerKey.test.ts` | 23 tests: load/configured/cleared for both providers, save, clear, empty draft refused, failed save and failed clear, busy refusing a second write, Azure region save/failure, Groq having no region |
-| `npm --prefix ui run test -- src/settingsWrite.test.ts` | 18 tests: the four existing mutations under the tagged mirror, provider key save and clear mirroring a status, and both failure sentences |
+| `./scripts/test.sh` | exit 0 — typecheck, 11 UI files / 161 tests, production build, IPC boundary, `cargo test --workspace` (34 + 121 + 3 + 78 + 22 + 2), re-run after merging `spec/architecture-deepening` at ticket 02 |
+| `npm --prefix ui run test -- src/providerKey.test.ts src/settingsWrite.test.ts` | 41 tests (23 + 18) after the merge: load/configured/cleared for both providers, save, clear, empty draft refused, failed save and failed clear, busy refusing a second write, Azure region save/failure, Groq having no region; the four existing mutations under the tagged mirror, provider key save and clear mirroring a status, and both failure sentences |
 | `npm --prefix ui run typecheck` | exit 0 |
 
 The component's layout, the disabled buttons and the badge are drawing only and
@@ -78,3 +77,7 @@ The app was not launched.
 - 2026-11-15 — The pure row module is `providerKey.ts`, not
   `providerKeyRow.ts`: the component is `ProviderKeyRow.tsx`, and the two names
   differ only by case, which collides on a case-insensitive filesystem.
+- 2026-11-15 — Merged `spec/architecture-deepening` (ticket 02 and 03) after the
+  implementation; it merged cleanly and the suite went green again at the
+  counts above. Ticket 03's `failure.rs` and `notice.ts` do not touch the key
+  row or the write protocol.
