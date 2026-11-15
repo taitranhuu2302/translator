@@ -71,7 +71,8 @@ export const GROQ_ROW: ProviderKeyRowConfig = {
 export interface ProviderKeyRowState {
   /** The whole status the shell last answered; null until the read lands. */
   status: ProviderStatus | null;
-  /** The sentence when the status could not be read. */
+  /** The whole sentence when the status could not be read. The component draws
+   * this verbatim; it adds no wording of its own. */
   statusProblem: string | null;
   /** The write-only key field. The key is never read back into it. */
   draft: string;
@@ -84,6 +85,15 @@ export interface ProviderKeyRowState {
 
 /** The one sentence for a save the row itself refuses. */
 const EMPTY_DRAFT_NOTICE = "Enter a key before saving.";
+
+/** The one sentence for a status the shell could not answer. This module owns
+ * the whole sentence; the component draws it verbatim. */
+const STATUS_UNREADABLE = "The provider status could not be read";
+
+/** The whole sentence a failed status read leaves behind. */
+function statusProblem(reason: unknown): string {
+  return `${STATUS_UNREADABLE}: ${describe(reason)}`;
+}
 
 /** The shell operations a row uses. The writer is ticket 05's one settings
  * write; `settingsSaved` carries a region save's mirrored settings back to the
@@ -156,7 +166,7 @@ export function createProviderKeyRow(
         const status = await effects.readStatus();
         publish({ ...state, status, statusProblem: null });
       } catch (reason) {
-        publish({ ...state, statusProblem: describe(reason) });
+        publish({ ...state, statusProblem: statusProblem(reason) });
       }
     },
 

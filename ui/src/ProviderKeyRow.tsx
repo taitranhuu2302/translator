@@ -69,7 +69,7 @@ export function ProviderKeyRow({
 
       <p className="muted small">
         {state.statusProblem
-          ? `The provider status could not be read: ${state.statusProblem}`
+          ? state.statusProblem
           : state.status
             ? config.statusLine(state.status)
             : "Checking the Keychain…"}

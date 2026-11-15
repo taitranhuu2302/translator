@@ -139,7 +139,9 @@ describe("loading one provider's key row", () => {
       await row.load();
 
       expect(row.state.status).toBeNull();
-      expect(row.state.statusProblem).toBe("the Keychain refused");
+      expect(row.state.statusProblem).toBe(
+        "The provider status could not be read: the Keychain refused",
+      );
     });
   }
 
