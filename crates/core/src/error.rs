@@ -135,6 +135,11 @@ pub enum CredentialError {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[serde(rename_all = "snake_case")]
 pub enum EngineError {
+    /// Text that is empty after trimming is not a translation request. Every
+    /// entry point that accepts text answers this instead of calling a
+    /// provider, writing a history row, or returning an empty success.
+    #[error("there is nothing to translate")]
+    NothingToTranslate,
     #[error("selection capture failed: {0}")]
     Capture(#[from] CaptureError),
     #[error("translation failed: {0}")]
@@ -177,6 +182,14 @@ mod tests {
         assert!(message.contains("Azure"), "{message}");
         assert!(message.contains("resource"), "{message}");
         assert!(!message.to_lowercase().contains("quota"), "{message}");
+    }
+
+    #[test]
+    fn nothing_to_translate_is_a_bare_wire_value() {
+        assert_eq!(
+            serde_json::to_value(EngineError::NothingToTranslate).expect("the error serializes"),
+            serde_json::json!("nothing_to_translate")
+        );
     }
 
     #[test]

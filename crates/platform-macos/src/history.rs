@@ -53,10 +53,7 @@ impl MacHistoryStore {
     }
 
     pub fn default_path() -> PathBuf {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_default();
-        home.join("Library/Application Support/com.taitran.translator/history.sqlite3")
+        crate::bundle::application_support_dir().join("history.sqlite3")
     }
 
     /// Run one operation against the lazily opened database. A poisoned lock and

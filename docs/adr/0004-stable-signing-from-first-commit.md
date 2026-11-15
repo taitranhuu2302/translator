@@ -6,4 +6,6 @@ Every build, including development ones, is signed with a stable self-signed cer
 
 Packaging is part of the build, not a manual step: the build emits a real `.app` with the menu-bar-only `LSUIElement` key and signs it. A Tauri dev run is not signed, which is why the manual checklist runs against the packaged bundle rather than `cargo tauri dev`.
 
+The identifier is authored once, in `packaging/Info.plist`; the Application Support directory and the Keychain service are derived from the running bundle's identifier rather than restated in code. A rename therefore moves history and settings to a new directory (and saved keys to a new service) — intended, because the identifier is the identity, but plan a migration if it ever changes.
+
 **Consequences:** a one-time certificate setup before the first run, and a signing step in the build script — the project is not buildable unsigned. Without this, a rebuild looks like broken AX code and costs a day of debugging; with it, TCC grants survive rebuilds and a Developer ID can replace the self-signed cert later without disturbing permissions.
