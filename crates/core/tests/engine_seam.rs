@@ -980,37 +980,139 @@ fn a_missing_groq_key_names_groq_in_the_engine_error() {
 }
 
 #[test]
-fn improving_blank_text_asks_no_provider_and_writes_no_history() {
-    let harness = Harness::new(
-        FakeCapture::default(),
-        FakeProvider::streaming_improvement(
-            Improvement {
-                corrected: "unused".to_owned(),
-                better: "unused".to_owned(),
-            },
-            vec![ImproveDelta {
-                part: ImprovePart::Corrected,
-                text: "unused".to_owned(),
-            }],
-        ),
-    );
+fn blank_text_is_refused_by_the_window_translate_entry_point_in_either_mode() {
+    for text in ["", "   ", "\n\t "] {
+        for mode in [Mode::Translate, Mode::Improve] {
+            let harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
 
-    let mut deltas = 0;
-    let improvement = harness
+            let error = harness
+                .engine()
+                .translate_text(text, mode)
+                .expect_err("blank text is not a translation request");
+
+            assert_eq!(error, EngineError::NothingToTranslate);
+            assert!(
+                harness.provider.requests().is_empty(),
+                "no provider is consulted for {text:?}"
+            );
+            assert!(
+                harness.provider.improve_requests().is_empty(),
+                "no Improve provider is consulted for {text:?}"
+            );
+            assert!(
+                harness.history.entries().is_empty(),
+                "blank text writes no history row for {text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn blank_text_is_refused_by_the_direction_choosing_entry_point_in_either_mode() {
+    for text in ["", "   ", "\n\t "] {
+        for mode in [Mode::Translate, Mode::Improve] {
+            let harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+
+            let error = harness
+                .engine()
+                .translate_text_in(
+                    text,
+                    mode,
+                    Some(Direction {
+                        source: Language::english(),
+                        target: Language::vietnamese(),
+                    }),
+                )
+                .expect_err("blank text is not a translation request");
+
+            assert_eq!(error, EngineError::NothingToTranslate);
+            assert!(harness.provider.requests().is_empty());
+            assert!(harness.provider.improve_requests().is_empty());
+            assert!(harness.history.entries().is_empty());
+        }
+    }
+}
+
+#[test]
+fn blank_text_is_refused_by_the_streaming_improve_entry_point() {
+    for text in ["", "   ", "\n\t "] {
+        let harness = Harness::new(
+            FakeCapture::default(),
+            FakeProvider::streaming_improvement(
+                Improvement {
+                    corrected: "unused".to_owned(),
+                    better: "unused".to_owned(),
+                },
+                vec![ImproveDelta {
+                    part: ImprovePart::Corrected,
+                    text: "unused".to_owned(),
+                }],
+            ),
+        );
+
+        let mut deltas = 0;
+        let error = harness
+            .engine()
+            .improve_streaming(text, &mut |_| deltas += 1)
+            .expect_err("blank text has nothing to improve");
+
+        assert_eq!(error, EngineError::NothingToTranslate);
+        assert_eq!(deltas, 0, "nothing streams for {text:?}");
+        assert!(
+            harness.provider.improve_requests().is_empty(),
+            "no provider is consulted for {text:?}"
+        );
+        assert!(
+            harness.history.entries().is_empty(),
+            "blank text writes no history row for {text:?}"
+        );
+    }
+}
+
+#[test]
+fn text_with_surrounding_whitespace_is_translated_unchanged() {
+    // The blank rule trims only to decide; it must not rewrite what the user
+    // selected or typed.
+    let harness = Harness::new(FakeCapture::default(), provider_saying("Hello"));
+
+    harness
         .engine()
-        .improve_streaming("   \n\t", &mut |_| deltas += 1)
-        .expect("blank text has nothing to improve");
+        .translate_text("  bonjour  ", Mode::Translate)
+        .expect("non-blank text is still translated");
 
     assert_eq!(
-        improvement,
-        Improvement {
-            corrected: String::new(),
-            better: String::new(),
-        }
+        harness.provider.requests(),
+        vec![TranslateRequest {
+            text: "  bonjour  ".to_owned(),
+            source: Some(Language::english()),
+            target: Language::vietnamese(),
+        }]
     );
-    assert_eq!(deltas, 0);
-    assert!(harness.provider.improve_requests().is_empty());
-    assert!(harness.history.entries().is_empty());
+    assert_eq!(harness.history.entries().len(), 1);
+    assert_eq!(harness.history.entries()[0].source, "  bonjour  ");
+}
+
+#[test]
+fn improving_whitespace_wrapped_text_reaches_the_provider_unchanged() {
+    let harness = Harness::new(
+        FakeCapture::default(),
+        FakeProvider::improving_with(Improvement {
+            corrected: "He goes home.".to_owned(),
+            better: "He's heading home.".to_owned(),
+        }),
+    );
+
+    harness
+        .engine()
+        .translate_text("  He go home.  ", Mode::Improve)
+        .expect("non-blank text is still improved");
+
+    assert_eq!(
+        harness.provider.improve_requests(),
+        vec![ImproveRequest {
+            text: "  He go home.  ".to_owned(),
+        }]
+    );
 }
 
 #[test]
