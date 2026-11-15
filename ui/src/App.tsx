@@ -135,6 +135,8 @@ export function App() {
     async (source: string, requested: Direction | null) => {
       const id = ++requestId.current;
       setCopied(false);
+      // The engine now enforces the blank rule; this check only improves the
+      // affordance by clearing the pane instead of awaiting a refusal.
       if (source.trim().length === 0) {
         setResult((state) => reduceResult(state, { type: "cleared" }));
         return;
@@ -165,6 +167,8 @@ export function App() {
   const runImprovement = useCallback(async (source: string) => {
     const id = ++requestId.current;
     setCopiedPart(null);
+    // The engine now enforces the blank rule; this check only improves the
+    // affordance by clearing the pane instead of awaiting a refusal.
     if (source.trim().length === 0) {
       setImprovement((state) => reduceImprovement(state, { type: "cleared" }));
       return;
