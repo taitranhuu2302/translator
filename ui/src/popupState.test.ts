@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { Translation } from "./ipc";
-import { OPENING, formatCaptureFailure, formatFailure, reduce } from "./popupState";
+import { noticeFor, noticeForCapture } from "./notice";
+import { OPENING, reduce } from "./popupState";
 
 const translation: Translation = {
   text: "Hello world",
@@ -36,13 +37,18 @@ describe("the Quick Translate popup", () => {
   });
 
   it("says nothing was selected instead of showing an empty translation", () => {
-    expect(reduce(OPENING, { type: "prefill", prefill: "nothing_selected" })).toEqual({
+    const nothingSelected = {
       phase: "nothing_selected",
-    });
+      ...noticeForCapture("nothing_selected"),
+    };
+
+    expect(
+      reduce(OPENING, { type: "prefill", prefill: "nothing_selected" }),
+    ).toEqual(nothingSelected);
 
     expect(
       reduce(OPENING, { type: "prefill", prefill: { selection: { text: "  \n " } } }),
-    ).toEqual({ phase: "nothing_selected" });
+    ).toEqual(nothingSelected);
   });
 
   it("names an offline failure as offline, not as a generic error", () => {
@@ -64,7 +70,7 @@ describe("the Quick Translate popup", () => {
   });
 
   it("keeps another provider failure a provider failure, with the provider named", () => {
-    const failure = formatFailure({
+    const failure = noticeFor({
       provider: { malformed_response: { provider: "my_memory", message: "not JSON" } },
     });
 
@@ -74,7 +80,7 @@ describe("the Quick Translate popup", () => {
   });
 
   it("a bad key names the provider and points at Settings", () => {
-    const failure = formatFailure({
+    const failure = noticeFor({
       provider: {
         authentication_failed: { provider: "azure", cause: "invalid_key" },
       },
@@ -87,7 +93,7 @@ describe("the Quick Translate popup", () => {
   });
 
   it("an authentication failure written before the cause points at the key", () => {
-    const failure = formatFailure({
+    const failure = noticeFor({
       provider: { authentication_failed: { provider: "azure" } },
     });
 
@@ -95,7 +101,7 @@ describe("the Quick Translate popup", () => {
   });
 
   it("a refused Azure resource points at the resource, never at billing quota", () => {
-    const failure = formatFailure({
+    const failure = noticeFor({
       provider: {
         authentication_failed: {
           provider: "azure",
@@ -194,14 +200,14 @@ describe("the Quick Translate popup", () => {
   });
 
   it("explains a refusal to replace with no captured selection", () => {
-    const failure = formatCaptureFailure("nothing_to_replace");
+    const failure = noticeForCapture("nothing_to_replace");
 
     expect(failure.kind).toBe("capture");
     expect(failure.detail.toLowerCase()).toContain("select");
   });
 
   it("explains a secure field refusing the replace", () => {
-    const failure = formatCaptureFailure("secure_input");
+    const failure = noticeForCapture("secure_input");
 
     expect(failure.title.toLowerCase()).toContain("secure");
   });

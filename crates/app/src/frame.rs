@@ -99,17 +99,25 @@ fn write_atomically(path: &Path, frame: &Frame) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
 
     fn temp_path(name: &str) -> PathBuf {
+        // Parallel tests can read the same `SystemTime`; the counter keeps each
+        // test's directory its own.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir()
-            .join(format!("translator-frame-{nanos}"))
+            .join(format!(
+                "translator-frame-{}-{nanos}-{sequence}",
+                std::process::id()
+            ))
             .join(name)
     }
 

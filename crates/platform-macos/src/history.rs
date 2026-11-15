@@ -53,10 +53,7 @@ impl MacHistoryStore {
     }
 
     pub fn default_path() -> PathBuf {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_default();
-        home.join("Library/Application Support/com.taitran.translator/history.sqlite3")
+        crate::bundle::application_support_dir().join("history.sqlite3")
     }
 
     /// Run one operation against the lazily opened database. A poisoned lock and
@@ -282,17 +279,26 @@ fn mode_from_name(name: &str) -> Result<Mode, HistoryError> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
 
     fn temp_path(name: &str) -> PathBuf {
+        // Tests run in parallel and `SystemTime` is not guaranteed to advance
+        // between two calls: without the counter, one test can write into the
+        // database another is using.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir()
-            .join(format!("translator-history-{nanos}"))
+            .join(format!(
+                "translator-history-{}-{nanos}-{sequence}",
+                std::process::id()
+            ))
             .join(name)
     }
 

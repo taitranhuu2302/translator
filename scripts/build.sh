@@ -8,7 +8,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 IDENTITY="${TRANSLATOR_SIGNING_IDENTITY:-Translator Local Signing}"
-BUNDLE_ID="com.taitran.translator"
 APP_NAME="Translator"
 CERTIFICATE_ROOT="0210dfaace23b661886724d8588f09a5ee30882b"
 APP="target/bundle/$APP_NAME.app"
@@ -18,6 +17,13 @@ if ! security find-identity -v -p codesigning | grep -qF "\"$IDENTITY\""; then
   echo "       See docs/adr/0004-stable-signing-from-first-commit.md." >&2
   exit 1
 fi
+
+# Identity has one authoring point (packaging/Info.plist for the identifier,
+# Cargo.toml for the version). Fail before spending a build on a tree whose
+# Tauri config and plist disagree, since the signed identifier would silently
+# lose the Accessibility grant.
+./scripts/check-identity.sh
+BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' packaging/Info.plist)"
 
 if [ ! -d node_modules ]; then
   echo "==> installing workspace dependencies"
@@ -53,15 +59,10 @@ cp packaging/Info.plist "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # TCC keys the Accessibility grant to the bundle identifier, and the designated
-# requirement pins $BUNDLE_ID. If the plist and the signing identity drift apart
-# the app registers under one id and is required under another, and the grant
-# this script exists to protect is silently lost.
+# requirement pins $BUNDLE_ID. The identifier above was read from this same
+# plist, and `check-identity.sh` already held the Tauri config to it, so there is
+# no second copy left to compare.
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
-PLIST_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist")"
-if [ "$PLIST_BUNDLE_ID" != "$BUNDLE_ID" ]; then
-  echo "error: packaging/Info.plist declares $PLIST_BUNDLE_ID, but the bundle is signed as $BUNDLE_ID." >&2
-  exit 1
-fi
 PLIST_EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
 if [ "$PLIST_EXECUTABLE" != "translator" ]; then
   echo "error: packaging/Info.plist declares CFBundleExecutable $PLIST_EXECUTABLE, expected translator." >&2

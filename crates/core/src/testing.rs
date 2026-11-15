@@ -1,6 +1,10 @@
-//! Fakes for the six ports, kept in one module so the port shapes live in one
+//! Fakes for the ports, kept in one module so the port shapes live in one
 //! place. Every fake is cheap to clone: the test keeps a handle for assertions
 //! while the engine owns its own.
+//!
+//! This module is test support, not part of what `translator-core` ships: it
+//! compiles only for this crate's tests or when a consumer enables the
+//! `test-support` feature from a dev-dependency.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -484,8 +488,10 @@ impl SpeechOutput for RecordingSpeech {
     }
 }
 
-/// An in-memory history store. Search matches either side, newest first. Writes
-/// can be scripted to fail, which is how the best-effort rule is tested.
+/// An in-memory history store. Search matches either side, newest first, after
+/// trimming the query the way the macOS store does; `%`, `_` and `\` are plain
+/// text rather than wildcards. Writes can be scripted to fail, which is how the
+/// best-effort rule is tested.
 #[derive(Clone, Default)]
 pub struct InMemoryHistory {
     state: Arc<Mutex<HistoryState>>,
@@ -528,7 +534,9 @@ impl HistoryStore for InMemoryHistory {
     }
 
     fn search(&self, query: &str, limit: usize) -> Result<Vec<HistoryEntry>, HistoryError> {
-        let needle = query.to_lowercase();
+        // `contains` is a literal match, so `%`, `_` and `\` need no escaping
+        // here; the parity test holds this store to the macOS one's behaviour.
+        let needle = query.trim().to_lowercase();
         let state = self.state.lock().unwrap();
         Ok(state
             .entries

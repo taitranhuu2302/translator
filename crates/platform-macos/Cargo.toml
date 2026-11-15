@@ -14,3 +14,8 @@ security-framework = "3"
 security-framework-sys = "2"
 serde_json = { workspace = true }
 translator-core = { workspace = true }
+
+[dev-dependencies]
+# The history parity test drives the fake store and this crate's real store
+# through the same port.
+translator-core = { workspace = true, features = ["test-support"] }

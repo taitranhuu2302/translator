@@ -18,10 +18,7 @@ impl MacSettingsStore {
     }
 
     pub fn default_path() -> PathBuf {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_default();
-        home.join("Library/Application Support/com.taitran.translator/settings.json")
+        crate::bundle::application_support_dir().join("settings.json")
     }
 }
 
@@ -74,18 +71,26 @@ fn write_atomically(path: &Path, settings: &Settings) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
     use translator_core::LanguagePair;
 
     fn temp_path(name: &str) -> PathBuf {
+        // Parallel tests can read the same `SystemTime`; the counter keeps each
+        // test's directory its own.
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir()
-            .join(format!("translator-settings-{nanos}"))
+            .join(format!(
+                "translator-settings-{}-{nanos}-{sequence}",
+                std::process::id()
+            ))
             .join(name)
     }
 

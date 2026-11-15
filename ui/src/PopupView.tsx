@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
+import { providerLabel } from "./format";
 import { ipc, onPopupPrefill, type EngineError } from "./ipc";
-import { OPENING, providerLabel, reduce } from "./popupState";
+import { performNoticeAction } from "./noticeActions";
+import { NoticeView } from "./NoticeView";
+import { OPENING, reduce } from "./popupState";
 
 /**
  * The Quick Translate panel's page. It is shown before a translation exists, so
@@ -186,24 +189,14 @@ export function Popup() {
         <p className="popup-status">Replacing…</p>
       ) : null}
 
-      {state.phase === "replace_failed" ? (
-        <div className={`popup-failure ${state.kind}`}>
-          <strong>{state.title}</strong>
-          <span className="muted small">{state.detail}</span>
-        </div>
-      ) : null}
-
-      {state.phase === "nothing_selected" ? (
-        <p className="popup-status">
-          Select something first, then press the Quick Translate shortcut again.
-        </p>
-      ) : null}
-
-      {state.phase === "failed" ? (
-        <div className={`popup-failure ${state.kind}`}>
-          <strong>{state.title}</strong>
-          <span className="muted small">{state.detail}</span>
-        </div>
+      {state.phase === "replace_failed" ||
+      state.phase === "nothing_selected" ||
+      state.phase === "failed" ? (
+        <NoticeView
+          className="popup-failure"
+          notice={state}
+          onAction={performNoticeAction}
+        />
       ) : null}
 
       <p className="popup-hint muted small">

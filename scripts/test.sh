@@ -6,6 +6,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Identity is authored in packaging/Info.plist and Cargo.toml; a drifted copy
+# fails here rather than at the first signed bundle. It costs nothing, so it
+# runs before the install.
+./scripts/check-identity.sh
+
 if [ ! -d node_modules ]; then
   echo "==> installing workspace dependencies"
   npm ci --no-audit --no-fund

@@ -5,8 +5,6 @@
 //! the rules live here so they are testable without a window, a Carbon hotkey or
 //! a settings file.
 
-use std::time::Duration;
-
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
@@ -14,10 +12,6 @@ use translator_core::{LanguagePair, Settings, ShortcutBindings};
 
 use crate::main_thread::on_main_thread;
 use crate::{tray, AppState};
-
-/// Shortcut registrations and menu swaps are AppKit work posted to the main
-/// thread; the caller waits this long for the answer before reporting failure.
-const MAIN_THREAD_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// What a combination that cannot be used says. It never guesses why.
 pub const INVALID_BINDING: &str = "That combination cannot be used as a shortcut.";
@@ -476,7 +470,7 @@ pub fn reset_shortcuts_and_language_pair(app: &AppHandle) -> Result<ResetOutcome
 /// belongs there, and the caller must know whether it succeeded before it
 /// unregisters what the new combination replaces.
 fn register_on_main_thread(app: &AppHandle, shortcut: Shortcut) -> Result<(), String> {
-    match on_main_thread(app, MAIN_THREAD_TIMEOUT, move |handle| {
+    match on_main_thread(app, move |handle| {
         handle
             .global_shortcut()
             .register(shortcut)
@@ -488,7 +482,7 @@ fn register_on_main_thread(app: &AppHandle, shortcut: Shortcut) -> Result<(), St
 }
 
 fn unregister_on_main_thread(app: &AppHandle, shortcut: Shortcut) {
-    let outcome = on_main_thread(app, MAIN_THREAD_TIMEOUT, move |handle| {
+    let outcome = on_main_thread(app, move |handle| {
         handle
             .global_shortcut()
             .unregister(shortcut)

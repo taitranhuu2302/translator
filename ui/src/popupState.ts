@@ -6,19 +6,8 @@
  * failure, or dismissed. Keeping the transitions here means the rules are tested
  * without a window, a provider or a running app.
  */
-import {
-  formatCaptureFailure,
-  formatFailure,
-  type PopupFailure,
-} from "./failures";
 import type { EngineError, PopupPrefill, Translation } from "./ipc";
-
-export type { FailureKind, PopupFailure } from "./failures";
-export {
-  formatCaptureFailure,
-  formatFailure,
-  providerLabel,
-} from "./failures";
+import { noticeFor, noticeForCapture, type Notice } from "./notice";
 
 export type PopupState =
   | { phase: "opening" }
@@ -29,9 +18,9 @@ export type PopupState =
       phase: "replace_failed";
       source: string;
       translation: Translation;
-    } & PopupFailure)
-  | { phase: "nothing_selected" }
-  | ({ phase: "failed" } & PopupFailure)
+    } & Notice)
+  | ({ phase: "nothing_selected" } & Notice)
+  | ({ phase: "failed" } & Notice)
   | { phase: "dismissed" };
 
 export type PopupEvent =
@@ -51,14 +40,16 @@ export function reduce(state: PopupState, event: PopupEvent): PopupState {
     case "prefill": {
       const prefill = event.prefill;
       if (prefill === "nothing_selected") {
-        return { phase: "nothing_selected" };
+        return nothingSelected();
       }
       if ("failure" in prefill) {
-        return failedWith(formatCaptureFailure(prefill.failure));
+        return failedWith(noticeForCapture(prefill.failure));
       }
       const source = prefill.selection.text;
+      // The engine now enforces the blank rule; this check only improves the
+      // affordance, saying "nothing selected" instead of showing a failure.
       if (source.trim().length === 0) {
-        return { phase: "nothing_selected" };
+        return nothingSelected();
       }
       return { phase: "translating", source };
     }
@@ -77,7 +68,7 @@ export function reduce(state: PopupState, event: PopupEvent): PopupState {
       if (state.phase !== "translating") {
         return state;
       }
-      return failedWith(formatFailure(event.error));
+      return failedWith(noticeFor(event.error));
 
     // Enter commits the translation that is on screen. There is no second
     // translation and no re-read of the Selection: the user gets exactly the
@@ -98,11 +89,17 @@ export function reduce(state: PopupState, event: PopupEvent): PopupState {
         phase: "replace_failed",
         source: state.source,
         translation: state.translation,
-        ...formatFailure(event.error),
+        ...noticeFor(event.error),
       };
   }
 }
 
-function failedWith(failure: PopupFailure): PopupState {
-  return { phase: "failed", ...failure };
+function failedWith(notice: Notice): PopupState {
+  return { phase: "failed", ...notice };
+}
+
+/** Both ways of arriving with no text — an empty prefill and a trimmed-to-empty
+ * selection — are the same outcome and the same words. */
+function nothingSelected(): PopupState {
+  return { phase: "nothing_selected", ...noticeForCapture("nothing_selected") };
 }
