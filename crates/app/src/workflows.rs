@@ -112,7 +112,7 @@ pub fn replace(
 /// What changing the login item left behind. `enabled` is the login item's
 /// actual state, `settings` what the file now holds, and `problem` a sentence
 /// when the change could not be made or persisted.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct StartAtLoginOutcome {
     pub enabled: bool,
     pub settings: Settings,
@@ -1361,5 +1361,25 @@ mod tests {
 
         assert!(reset_shortcuts(&registry, &route, &store).is_err());
         assert!(log(&calls).is_empty(), "an unreadable file touched a port");
+    }
+
+    #[test]
+    fn the_login_item_outcome_serializes_as_the_shell_returns_it() {
+        // The command returns this value to the UI directly, so its field names
+        // are the wire contract.
+        let outcome = StartAtLoginOutcome {
+            enabled: true,
+            settings: preference(true),
+            problem: Some("left as it was".to_owned()),
+        };
+
+        let value = serde_json::to_value(&outcome).expect("the outcome serializes");
+
+        assert_eq!(value["enabled"], serde_json::json!(true));
+        assert_eq!(value["problem"], serde_json::json!("left as it was"));
+        assert_eq!(
+            value["settings"],
+            serde_json::to_value(preference(true)).expect("the settings serialize")
+        );
     }
 }
