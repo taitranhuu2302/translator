@@ -12,6 +12,7 @@ pub mod language;
 pub mod model;
 pub mod ports;
 pub mod providers;
+#[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
 pub use chunking::{chunk_text, join_chunks, MAX_CHUNK_CHARS};

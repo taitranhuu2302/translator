@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "Translator product logic and port traits, with no platform dependency"
 
+[features]
+# The fakes for the ports. They are test support, not part of the shipped
+# interface, so nothing but tests enables this feature.
+test-support = []
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -12,3 +17,8 @@ thiserror = "2"
 # A blocking client is all the engine needs, and rustls keeps the TLS stack
 # self-contained so `core` builds anywhere. See `src/http.rs` for the choice.
 ureq = { version = "2.12", default-features = false, features = ["tls", "gzip"] }
+
+[dev-dependencies]
+# `tests/*.rs` compile against the library rather than `cfg(test)`, so the
+# crate enables its own test-support feature the same way any consumer does.
+translator-core = { path = ".", features = ["test-support"] }
