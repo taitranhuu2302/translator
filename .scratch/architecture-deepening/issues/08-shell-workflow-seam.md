@@ -47,7 +47,7 @@
 
 | Command | Result |
 | --- | --- |
-| `./scripts/test.sh` | exit 0 — typecheck, 118 UI tests, production build, IPC boundary, `cargo test --workspace` (34 + 120 + 3 + 63 + 22) |
+| `./scripts/test.sh` | exit 0 — typecheck, 118 UI tests, production build, IPC boundary, `cargo test --workspace` (34 + 120 + 3 + 63 + 22, plus the 2 history-parity tests after merging ticket 07) |
 | `cargo test -p translator-app workflows` | 4 passed: success; login item refuses; save fails in both directions; unreadable settings. Every failure case asserts the login item and the saved preference are exactly where they started. |
 
 The packaged app turning the login item on and off is only checkable by hand; the
