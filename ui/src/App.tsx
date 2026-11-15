@@ -135,6 +135,8 @@ export function App() {
   const runTranslation = useCallback(
     async (source: string, requested: Direction | null) => {
       setCopied(false);
+      // The engine now enforces the blank rule; this check only improves the
+      // affordance by clearing the pane instead of awaiting a refusal.
       if (source.trim().length === 0) {
         setResult((state) => reduceResult(state, { type: "cleared" }));
         return;
@@ -164,6 +166,8 @@ export function App() {
   // provider strictly validated, so it replaces what the chunks showed.
   const runImprovement = useCallback(async (source: string) => {
     setCopiedPart(null);
+    // The engine now enforces the blank rule; this check only improves the
+    // affordance by clearing the pane instead of awaiting a refusal.
     if (source.trim().length === 0) {
       setImprovement((state) => reduceImprovement(state, { type: "cleared" }));
       return;

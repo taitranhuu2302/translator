@@ -47,6 +47,8 @@ export function reduce(state: PopupState, event: PopupEvent): PopupState {
         return failedWith(noticeForCapture(prefill.failure));
       }
       const source = prefill.selection.text;
+      // The engine now enforces the blank rule; this check only improves the
+      // affordance, saying "nothing selected" instead of showing a failure.
       if (source.trim().length === 0) {
         return nothingSelected();
       }

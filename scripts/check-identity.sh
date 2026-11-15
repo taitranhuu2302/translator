@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+#
+# The repository's one identity check. The bundle identifier is authored in
+# packaging/Info.plist — the artifact macOS reads — and the version in the
+# workspace; everything else derives from those two places or is asserted equal
+# to them here. It runs in scripts/test.sh and before packaging, so a drift is a
+# failing check rather than a lost Accessibility grant
+# (docs/adr/0004-stable-signing-from-first-commit.md).
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+PLIST="packaging/Info.plist"
+CONFIG="crates/app/tauri.conf.json"
+
+fail() {
+  echo "error: $1" >&2
+  exit 1
+}
+
+plist_value() {
+  /usr/libexec/PlistBuddy -c "Print :$1" "$PLIST"
+}
+
+config_value() {
+  node -e '
+    const config = require(require("path").resolve(process.argv[1]));
+    const value = config[process.argv[2]];
+    if (value === undefined) process.exit(1);
+    process.stdout.write(String(value));
+  ' "$CONFIG" "$1"
+}
+
+workspace_version() {
+  awk '
+    /^\[workspace\.package\]/ { section = 1; next }
+    /^\[/ { section = 0 }
+    section && /^version[[:space:]]*=/ {
+      sub(/^version[[:space:]]*=[[:space:]]*"/, "")
+      sub(/".*$/, "")
+      print
+      exit
+    }
+  ' Cargo.toml
+}
+
+PLIST_ID="$(plist_value CFBundleIdentifier)"
+CONFIG_ID="$(config_value identifier)"
+WORKSPACE_VERSION="$(workspace_version)"
+
+[ -n "$PLIST_ID" ] || fail "$PLIST declares no CFBundleIdentifier."
+[ -n "$WORKSPACE_VERSION" ] || fail "Cargo.toml declares no [workspace.package] version."
+
+if [ "$CONFIG_ID" != "$PLIST_ID" ]; then
+  fail "$CONFIG declares identifier $CONFIG_ID, but $PLIST (the single source) declares $PLIST_ID."
+fi
+
+for key in CFBundleShortVersionString CFBundleVersion; do
+  version="$(plist_value "$key")"
+  if [ "$version" != "$WORKSPACE_VERSION" ]; then
+    fail "$PLIST declares $key $version, but the workspace version is $WORKSPACE_VERSION."
+  fi
+done
+
+CONFIG_VERSION="$(config_value version)"
+if [ "$CONFIG_VERSION" != "$WORKSPACE_VERSION" ]; then
+  fail "$CONFIG declares version $CONFIG_VERSION, but the workspace version is $WORKSPACE_VERSION."
+fi
+
+# The runtime copies were deleted, not re-pointed: no Rust or shell source may
+# name the identifier a second time. If this fires, derive from
+# translator_platform_macos::bundle or read the plist; do not add a constant.
+status=0
+offenders="$(grep -rn --include='*.rs' --include='*.sh' -F "$PLIST_ID" crates scripts)" || status=$?
+if [ "$status" -gt 1 ]; then
+  fail "the copy guard could not scan crates/ and scripts/ (grep exited $status)."
+fi
+if [ -n "$offenders" ]; then
+  echo "error: the bundle identifier is authored in $PLIST; these files still copy it:" >&2
+  printf '%s\n' "$offenders" >&2
+  exit 1
+fi
+
+echo "identity ok: $PLIST_ID, version $WORKSPACE_VERSION"

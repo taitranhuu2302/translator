@@ -215,6 +215,8 @@ export type CredentialError =
 
 /** Every engine outcome is a typed success or one of these. */
 export type EngineError =
+  /** Text was empty after trimming, so the engine made no request at all. */
+  | "nothing_to_translate"
   | { capture: CaptureError }
   | { provider: ProviderError }
   | { speech: SpeechError }
