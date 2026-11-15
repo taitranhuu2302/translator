@@ -32,6 +32,7 @@ import { performNoticeAction } from "./noticeActions";
 import { CaptureNoticeView, NoticeView } from "./NoticeView";
 import { Onboarding } from "./Onboarding";
 import { SettingsPane } from "./SettingsPane";
+import { SETTINGS_READ_FAILED } from "./settingsWrite";
 import {
   EMPTY_RESULT,
   reduceResult,
@@ -449,7 +450,9 @@ export function App() {
       </header>
 
       {settingsError ? (
-        <p className="notice error">Settings could not be loaded: {settingsError}</p>
+        <p className="notice error">
+          {SETTINGS_READ_FAILED} {settingsError}
+        </p>
       ) : null}
 
       {failure ? (
@@ -492,9 +495,7 @@ export function App() {
           <div className="panes single">
             <section className="pane">
               <p className="empty">
-                {settingsError
-                  ? "Settings could not be loaded."
-                  : "Loading settings…"}
+                {settingsError ? SETTINGS_READ_FAILED : "Loading settings…"}
               </p>
             </section>
           </div>

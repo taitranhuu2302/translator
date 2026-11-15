@@ -15,7 +15,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use frame::{Frame, FrameStore, ScreenRect};
-use serde::Serialize;
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
@@ -620,6 +619,12 @@ fn replace_selection_directly(app: &AppHandle) {
     });
 }
 
+/// This native dialog is a shell surface, not one of the two UI surfaces the
+/// capture-notice model is scoped to, so it owns its own copy deliberately: it
+/// cannot draw a TypeScript model, and its sentences name what this operation
+/// did ("nothing was replaced") rather than restating the popup's notice. The
+/// catch-all arm keeps a newly added `CaptureError` variant handled here until
+/// this dialog gives it words of its own.
 fn show_replace_failure(app: &AppHandle, error: &EngineError) {
     eprintln!("Translator: Replace failed: {error}");
     let message = match error {
@@ -734,26 +739,6 @@ async fn reset_shortcuts_and_language_pair(
     Ok(outcome)
 }
 
-/// What changing the login item left behind. `enabled` is the login item's
-/// actual state, `settings` the preference the file now holds, and `problem` a
-/// sentence when the change could not be made or persisted.
-#[derive(Serialize)]
-struct StartAtLoginOutcome {
-    enabled: bool,
-    settings: Settings,
-    problem: Option<String>,
-}
-
-impl From<workflows::StartAtLoginOutcome> for StartAtLoginOutcome {
-    fn from(outcome: workflows::StartAtLoginOutcome) -> Self {
-        Self {
-            enabled: outcome.enabled,
-            settings: outcome.settings,
-            problem: outcome.problem,
-        }
-    }
-}
-
 /// The login item's actual state, asked of the system rather than read from the
 /// settings file.
 #[tauri::command]
@@ -770,7 +755,7 @@ async fn set_start_at_login(
     app: AppHandle,
     state: State<'_, AppState>,
     enabled: bool,
-) -> Result<StartAtLoginOutcome, ()> {
+) -> Result<workflows::StartAtLoginOutcome, ()> {
     let settings = Arc::clone(&state.settings);
     let outcome = main_thread::on_main_thread(&app, move |handle| {
         workflows::set_start_at_login(
@@ -779,7 +764,7 @@ async fn set_start_at_login(
             enabled,
         )
     });
-    outcome.map(StartAtLoginOutcome::from).ok_or_else(|| {
+    outcome.ok_or_else(|| {
         eprintln!("Translator: the login item change did not run: the main thread did not answer");
     })
 }

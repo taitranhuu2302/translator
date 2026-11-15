@@ -13,7 +13,11 @@ import {
   groqStatusLine,
   regionChanged,
 } from "./providerStatus";
-import type { SettingsWriter } from "./settingsWrite";
+import type {
+  ChangeOutcome,
+  Mirror,
+  SettingsWriter,
+} from "./settingsWrite";
 
 /** The providers the Settings surface stores a key for. MyMemory has none. */
 export type ProviderKeyProvider = Extract<ProviderId, "azure" | "groq">;
@@ -71,7 +75,8 @@ export const GROQ_ROW: ProviderKeyRowConfig = {
 export interface ProviderKeyRowState {
   /** The whole status the shell last answered; null until the read lands. */
   status: ProviderStatus | null;
-  /** The sentence when the status could not be read. */
+  /** The whole sentence when the status could not be read. The component draws
+   * this verbatim; it adds no wording of its own. */
   statusProblem: string | null;
   /** The write-only key field. The key is never read back into it. */
   draft: string;
@@ -84,6 +89,15 @@ export interface ProviderKeyRowState {
 
 /** The one sentence for a save the row itself refuses. */
 const EMPTY_DRAFT_NOTICE = "Enter a key before saving.";
+
+/** The one sentence for a status the shell could not answer. This module owns
+ * the whole sentence; the component draws it verbatim. */
+const STATUS_UNREADABLE = "The provider status could not be read";
+
+/** The whole sentence a failed status read leaves behind. */
+function statusProblem(reason: unknown): string {
+  return `${STATUS_UNREADABLE}: ${describe(reason)}`;
+}
 
 /** The shell operations a row uses. The writer is ticket 05's one settings
  * write; `settingsSaved` carries a region save's mirrored settings back to the
@@ -139,6 +153,25 @@ export function createProviderKeyRow(
     for (const listener of listeners) listener();
   }
 
+  /** The one sequence behind every row action: refuse while busy, mark busy,
+   * send the change through the one settings write, and let the action publish
+   * what a success means for it. A refused write mirrors nothing, clears busy
+   * and gives the one failure sentence. */
+  async function write<O extends ChangeOutcome>(
+    send: () => Promise<O>,
+    applied: (outcome: Extract<O, { mirror: Mirror }>) => void,
+  ): Promise<void> {
+    if (state.busy) return;
+    publish({ ...state, busy: true, notice: null });
+    const outcome = await send();
+    if (outcome.mirror === null) {
+      const failure = outcome as Extract<O, { mirror: null }>;
+      publish({ ...state, busy: false, notice: failure.problem });
+      return;
+    }
+    applied(outcome as Extract<O, { mirror: Mirror }>);
+  }
+
   return {
     get state() {
       return state;
@@ -156,7 +189,7 @@ export function createProviderKeyRow(
         const status = await effects.readStatus();
         publish({ ...state, status, statusProblem: null });
       } catch (reason) {
-        publish({ ...state, statusProblem: describe(reason) });
+        publish({ ...state, statusProblem: statusProblem(reason) });
       }
     },
 
@@ -169,9 +202,9 @@ export function createProviderKeyRow(
       publish({ ...state, region: value });
     },
 
-    // The save and clear paths are separate user actions, but both go through
-    // the one settings write and both use the same busy guard, the same mirror
-    // rule and the same failure sentence.
+    // Save, clear and region save are separate user actions. Each supplies only
+    // its change and what a success publishes; the busy guard, the mirror rule
+    // and the failure sentence come from `write`.
     async save() {
       if (state.busy) return;
       const key = state.draft.trim();
@@ -179,63 +212,60 @@ export function createProviderKeyRow(
         publish({ ...state, notice: EMPTY_DRAFT_NOTICE });
         return;
       }
-      publish({ ...state, busy: true, notice: null });
-      const outcome = await effects.writer.change({
-        kind: "save_provider_key",
-        provider: config.provider,
-        key,
-      });
-      if (outcome.mirror === null) {
-        publish({ ...state, busy: false, notice: outcome.problem });
-        return;
-      }
-      publish({
-        ...state,
-        busy: false,
-        status: outcome.mirror.status,
-        draft: "",
-        notice: config.savedNotice,
-      });
+      await write(
+        () =>
+          effects.writer.change({
+            kind: "save_provider_key",
+            provider: config.provider,
+            key,
+          }),
+        (outcome) =>
+          publish({
+            ...state,
+            busy: false,
+            status: outcome.mirror.status,
+            draft: "",
+            notice: config.savedNotice,
+          }),
+      );
     },
 
     async clear() {
-      if (state.busy) return;
-      publish({ ...state, busy: true, notice: null });
-      const outcome = await effects.writer.change({
-        kind: "clear_provider_key",
-        provider: config.provider,
-      });
-      if (outcome.mirror === null) {
-        publish({ ...state, busy: false, notice: outcome.problem });
-        return;
-      }
-      publish({
-        ...state,
-        busy: false,
-        status: outcome.mirror.status,
-        draft: "",
-        notice: config.clearedNotice,
-      });
+      await write(
+        () =>
+          effects.writer.change({
+            kind: "clear_provider_key",
+            provider: config.provider,
+          }),
+        (outcome) =>
+          publish({
+            ...state,
+            busy: false,
+            status: outcome.mirror.status,
+            draft: "",
+            notice: config.clearedNotice,
+          }),
+      );
     },
 
     async saveRegion() {
-      if (!config.region || state.busy) return;
-      publish({ ...state, busy: true, notice: null });
-      const outcome = await effects.writer.change({
-        kind: "azure_region",
-        region: state.region,
-      });
-      if (outcome.mirror === null) {
-        publish({ ...state, busy: false, notice: outcome.problem });
-        return;
-      }
-      effects.settingsSaved(outcome.mirror.settings);
-      publish({
-        ...state,
-        busy: false,
-        region: outcome.mirror.settings.azure_region,
-        notice: outcome.notice,
-      });
+      if (!config.region) return;
+      await write(
+        () =>
+          effects.writer.change({
+            kind: "azure_region",
+            region: state.region,
+          }),
+        (outcome) => {
+          effects.settingsSaved(outcome.mirror.settings);
+          publish({
+            ...state,
+            busy: false,
+            region: outcome.mirror.settings.azure_region,
+            notice: outcome.notice,
+          });
+        },
+      );
     },
   };
 }
