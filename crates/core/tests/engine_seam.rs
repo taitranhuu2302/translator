@@ -1071,6 +1071,104 @@ fn blank_text_is_refused_by_the_streaming_improve_entry_point() {
 }
 
 #[test]
+fn a_whitespace_only_selection_is_nothing_selected_for_quick_translate() {
+    for text in ["", "   ", "\n\t "] {
+        let harness = Harness::new(
+            FakeCapture::with_selection(text),
+            provider_saying("Hello"),
+        );
+
+        let error = harness
+            .engine()
+            .quick_translate()
+            .expect_err("a blank Selection is nothing selected");
+
+        assert_eq!(error, EngineError::Capture(CaptureError::NothingSelected));
+        assert!(
+            harness.provider.requests().is_empty(),
+            "no provider is consulted for a {text:?} Selection"
+        );
+        assert!(
+            harness.history.entries().is_empty(),
+            "a {text:?} Selection writes no history row"
+        );
+    }
+}
+
+#[test]
+fn a_whitespace_only_selection_is_nothing_selected_for_replace_selection() {
+    for text in ["", "   ", "\n\t "] {
+        let harness = Harness::new(
+            FakeCapture::with_selection(text),
+            provider_saying("Hello"),
+        );
+
+        let error = harness
+            .engine()
+            .replace_selection()
+            .expect_err("a blank Selection is nothing selected");
+
+        assert_eq!(error, EngineError::Capture(CaptureError::NothingSelected));
+        assert!(
+            harness.provider.requests().is_empty(),
+            "no provider is consulted for a {text:?} Selection"
+        );
+        assert!(
+            harness.history.entries().is_empty(),
+            "a {text:?} Selection writes no history row"
+        );
+        assert!(
+            harness.capture.writes().is_empty(),
+            "a {text:?} Selection is never replaced"
+        );
+    }
+}
+
+#[test]
+fn a_selection_with_surrounding_whitespace_is_translated_unchanged() {
+    // The capture entry points apply the same rule: trim only to decide, then
+    // forward the Selection exactly as it was captured.
+    let harness = Harness::new(
+        FakeCapture::with_selection("  bonjour  "),
+        provider_saying("Hello"),
+    );
+
+    let outcome = harness
+        .engine()
+        .quick_translate()
+        .expect("a non-blank Selection is still translated");
+
+    assert_eq!(outcome.source_text, "  bonjour  ");
+    assert_eq!(
+        harness.provider.requests(),
+        vec![TranslateRequest {
+            text: "  bonjour  ".to_owned(),
+            source: Some(Language::english()),
+            target: Language::vietnamese(),
+        }]
+    );
+    assert_eq!(harness.history.entries().len(), 1);
+    assert_eq!(harness.history.entries()[0].source, "  bonjour  ");
+}
+
+#[test]
+fn replace_selection_still_replaces_a_selection_with_surrounding_whitespace() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("  bonjour  "),
+        provider_saying("Hello"),
+    );
+
+    harness
+        .engine()
+        .replace_selection()
+        .expect("a non-blank Selection is still replaced");
+
+    assert_eq!(harness.capture.writes(), vec!["Hello".to_owned()]);
+    assert_eq!(harness.history.entries().len(), 1);
+    assert_eq!(harness.history.entries()[0].source, "  bonjour  ");
+}
+
+#[test]
 fn text_with_surrounding_whitespace_is_translated_unchanged() {
     // The blank rule trims only to decide; it must not rewrite what the user
     // selected or typed.

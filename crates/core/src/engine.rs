@@ -44,9 +44,15 @@ impl TranslatorEngine {
     }
 
     /// Quick Translate: capture the Selection, translate it and remember it.
+    ///
+    /// A Selection that is only whitespace is nothing selected, the same as not
+    /// selecting at all: it is refused before a provider or history is touched.
     pub fn quick_translate(&self) -> Result<QuickTranslation, EngineError> {
         let settings = self.settings.load()?;
         let selection = self.capture.read_selection()?;
+        if is_blank(&selection.text) {
+            return Err(EngineError::Capture(CaptureError::NothingSelected));
+        }
         let (translation, direction) = resolve_translation(
             self.provider.as_ref(),
             &selection.text,
@@ -65,9 +71,16 @@ impl TranslatorEngine {
     }
 
     /// Replace: translate the Selection and overwrite it in one step (`⌃⌥R`).
+    ///
+    /// A Selection that is only whitespace is nothing selected, so it is refused
+    /// before a provider is consulted, history is written, or the app is asked
+    /// to accept a replacement.
     pub fn replace_selection(&self) -> Result<Replacement, EngineError> {
         let settings = self.settings.load()?;
         let selection = self.capture.read_selection()?;
+        if is_blank(&selection.text) {
+            return Err(EngineError::Capture(CaptureError::NothingSelected));
+        }
         let (translation, direction) = resolve_translation(
             self.provider.as_ref(),
             &selection.text,
@@ -163,7 +176,7 @@ impl TranslatorEngine {
             }
             Err(error) => return Err(error.into()),
         };
-        if selection.text.trim().is_empty() {
+        if is_blank(&selection.text) {
             return Ok(ReadAloud {
                 spoken_text: String::new(),
             });
@@ -196,7 +209,7 @@ impl TranslatorEngine {
         // The blank rule lives at the engine's door, before settings or any
         // provider is touched, so no caller can send a space over the network.
         // Trimming decides only: `text` itself is forwarded unchanged.
-        if text.trim().is_empty() {
+        if is_blank(text) {
             return Err(EngineError::NothingToTranslate);
         }
         match mode {
@@ -236,7 +249,7 @@ impl TranslatorEngine {
         text: &str,
         sink: &mut dyn FnMut(&ImproveDelta),
     ) -> Result<Improvement, EngineError> {
-        if text.trim().is_empty() {
+        if is_blank(text) {
             return Err(EngineError::NothingToTranslate);
         }
         let improvement = self.provider.improve_streaming(
@@ -359,6 +372,12 @@ pub const HISTORY_RETENTION_SECONDS: i64 = 30 * 24 * 60 * 60;
 /// `created_at < cutoff`).
 pub fn history_cutoff(now: Timestamp) -> Timestamp {
     Timestamp(now.0 - HISTORY_RETENTION_SECONDS)
+}
+
+/// The one blank rule, so every entry point that consults a provider asks the
+/// same question. Trimming decides only: callers forward the original text.
+fn is_blank(text: &str) -> bool {
+    text.trim().is_empty()
 }
 
 /// The engine resolves direction from the Language Pair and the local guess, and
