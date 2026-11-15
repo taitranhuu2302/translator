@@ -167,15 +167,36 @@ async fn quick_translate(state: State<'_, AppState>) -> Result<QuickTranslation,
 
 #[tauri::command]
 async fn replace_selection(state: State<'_, AppState>) -> Result<Replacement, EngineError> {
-    state.engine.replace_selection()
+    let engine = Arc::clone(&state.engine);
+    // No popup is part of this path — `⌃⌥R` translates and replaces without one
+    // — so the workflow has nothing to hide or bring back.
+    replace_result(workflows::replace(None, || engine.replace_selection()))
+}
+
+/// Turn the workflow's outcome into the command's answer. A popup that could
+/// not be brought back is logged here, apart from the Replace failure it
+/// followed, rather than being folded into (or replacing) that error.
+fn replace_result(outcome: workflows::ReplaceOutcome) -> Result<Replacement, EngineError> {
+    match outcome {
+        workflows::ReplaceOutcome::Replaced(replacement) => Ok(replacement),
+        workflows::ReplaceOutcome::Failed { error, restore } => {
+            if let workflows::PopupRestore::Failed(problem) = restore {
+                eprintln!(
+                    "Translator: the popup could not be shown after a failed Replace: {problem}"
+                );
+            }
+            Err(error)
+        }
+    }
 }
 
 /// The popup's Enter: Replace the Selection with the translation already on
 /// screen, without capturing or translating again.
 ///
-/// The panel holds the keyboard while it is shown, so the clipboard fallback's
-/// synthesized ⌘V would land in our own page. It is hidden first, and shown
-/// again if the write fails so the popup can explain the failure inline.
+/// The hide → Replace → restore order lives in `workflows::replace`. The panel
+/// holds the keyboard while it is shown, so the clipboard fallback's synthesized
+/// ⌘V would land in our own page; the workflow hides it first and shows it again
+/// if the write fails so the popup can explain the failure inline.
 #[tauri::command]
 async fn replace_with_translation(
     app: AppHandle,
@@ -184,19 +205,19 @@ async fn replace_with_translation(
     translation: Translation,
 ) -> Result<Replacement, EngineError> {
     let engine = Arc::clone(&state.engine);
-
-    main_thread::on_main_thread(&app, panel::hide);
-    match engine.replace_with_translation(&source_text, translation) {
-        Ok(replacement) => Ok(replacement),
-        Err(error) => {
-            main_thread::on_main_thread(&app, move |handle| {
-                if let Err(show_error) = panel::show(handle) {
-                    eprintln!(
-                        "Translator: the popup could not be shown after a failed Replace: {show_error}"
-                    );
-                }
-            });
-            Err(error)
+    let outcome = main_thread::on_main_thread(&app, move |handle| {
+        workflows::replace(
+            Some(&workflows::ShellPanelPresenter::new(handle.clone())),
+            || engine.replace_with_translation(&source_text, translation),
+        )
+    });
+    match outcome {
+        Some(outcome) => replace_result(outcome),
+        None => {
+            eprintln!("Translator: Replace did not run: the main thread did not answer");
+            Err(EngineError::Capture(CaptureError::Unavailable {
+                reason: "the main thread did not answer, so nothing was replaced".to_owned(),
+            }))
         }
     }
 }
@@ -583,17 +604,20 @@ fn read_aloud_selection(app: &AppHandle) {
 }
 
 /// Replace (`⌃⌥R`): capture, translate and write in one step, off the main
-/// thread so a slow provider never freezes the app. There is no popup to carry
-/// a failure, so every typed failure gets a dialog — a Replace that did nothing
-/// must never look like it worked.
+/// thread so a slow provider never freezes the app. It runs through the same
+/// workflow as the popup's Replace, with no popup to hide or restore. There is
+/// no popup to carry a failure either, so every typed failure gets a dialog — a
+/// Replace that did nothing must never look like it worked.
 fn replace_selection_directly(app: &AppHandle) {
     let app = app.clone();
-    std::thread::spawn(
-        move || match app.state::<AppState>().engine.replace_selection() {
-            Ok(_) => {}
-            Err(error) => show_replace_failure(&app, &error),
-        },
-    );
+    std::thread::spawn(move || {
+        let engine = Arc::clone(&app.state::<AppState>().engine);
+        if let workflows::ReplaceOutcome::Failed { error, .. } =
+            workflows::replace(None, || engine.replace_selection())
+        {
+            show_replace_failure(&app, &error);
+        }
+    });
 }
 
 fn show_replace_failure(app: &AppHandle, error: &EngineError) {
