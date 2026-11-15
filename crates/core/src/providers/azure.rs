@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 
-use crate::error::{AuthFailure, HttpError, ProviderError};
+use crate::error::{AuthFailure, ProviderError};
 use crate::language::Language;
 use crate::model::{Improvement, ProviderId, ProviderTranslation};
 use crate::ports::{
@@ -20,12 +20,49 @@ use crate::ports::{
     TranslationProvider,
 };
 use crate::providers::encode_query_component;
+use crate::providers::failure::{
+    self, AuthStatus, BodyDetail, FailurePolicy, Meaning, ServerErrors, ServerFamily, Unrecognised,
+};
 
 pub const ENDPOINT: &str = "https://api.cognitive.microsofttranslator.com/translate";
 const API_VERSION: &str = "3.0";
 /// Azure expects UTF-8 JSON, sent either zipped or plain; this provider sends it
 /// plain.
 const CONTENT_TYPE: &str = "application/json; charset=UTF-8";
+
+/// Azure's failure policy: which statuses and 6-digit codes mean what. A 401 is
+/// always a bad key; a 403 is the quota (`403001`), a refusing resource
+/// (`403000`), or — with no recognised code — still a bad key, never a quota.
+const FAILURES: FailurePolicy = FailurePolicy {
+    provider: ProviderId::Azure,
+    auth_statuses: &[
+        AuthStatus {
+            status: 401,
+            codes: &[],
+            fallback: Meaning::Authentication(AuthFailure::InvalidKey),
+        },
+        AuthStatus {
+            status: 403,
+            codes: &[
+                (403001, Meaning::Quota),
+                (
+                    403000,
+                    Meaning::Authentication(AuthFailure::ResourceNotAuthorized),
+                ),
+            ],
+            fallback: Meaning::Authentication(AuthFailure::InvalidKey),
+        },
+    ],
+    unavailable_statuses: &[],
+    rate_limit_reason: "Azure is rate-limiting requests; try again shortly",
+    server_errors: ServerErrors {
+        family: ServerFamily::Network,
+        from: 500,
+        to: 599,
+    },
+    unrecognised: Unrecognised::Malformed(BodyDetail::Raw),
+    quota_markers: &[],
+};
 
 /// Where the region header comes from. Settings can change while the app runs,
 /// so it is read per request rather than captured at construction.
@@ -61,9 +98,7 @@ impl AzureProvider {
             // A Keychain read that failed is not "not configured": report it as
             // unavailable so the ladder still falls through, but the reason is
             // not hidden from logs.
-            Err(error) => Err(ProviderError::Unavailable {
-                reason: format!("the Azure key could not be read: {error}"),
-            }),
+            Err(error) => Err(failure::unreadable_key(&FAILURES, &error)),
         }
     }
 
@@ -108,9 +143,8 @@ impl TranslationProvider for AzureProvider {
         let key = self.key()?;
 
         let body = serde_json::to_string(&serde_json::json!([{ "text": request.text }]))
-            .map_err(|error| ProviderError::MalformedResponse {
-                provider: ProviderId::Azure,
-                message: format!("the request body could not be built: {error}"),
+            .map_err(|error| {
+                FAILURES.malformed(format!("the request body could not be built: {error}"))
             })?;
 
         let response = self
@@ -121,7 +155,7 @@ impl TranslationProvider for AzureProvider {
                 headers: self.headers(&key),
                 body: Some(body),
             })
-            .map_err(map_transport)?;
+            .map_err(|error| failure::transport(&FAILURES, error))?;
 
         read_answer(response.status, &response.body)
     }
@@ -129,16 +163,6 @@ impl TranslationProvider for AzureProvider {
     /// Improve belongs to the model provider (ticket 08).
     fn improve(&self, _request: &ImproveRequest) -> Result<Improvement, ProviderError> {
         Err(ProviderError::NotConfigured)
-    }
-}
-
-fn map_transport(error: HttpError) -> ProviderError {
-    match error {
-        HttpError::Unreachable { .. } => ProviderError::Offline,
-        HttpError::Request { message } => ProviderError::Network {
-            provider: ProviderId::Azure,
-            message,
-        },
     }
 }
 
@@ -162,65 +186,26 @@ struct TranslatedText {
 }
 
 /// Read one response. The status decides the family of failure; the body can
-/// only sharpen it — Azure puts a 6-digit `error.code` in the JSON.
+/// only sharpen it — Azure puts a 6-digit `error.code` in the JSON. The shared
+/// table owns that decision; this module only decodes a successful body.
 fn read_answer(status: u16, body: &str) -> Result<ProviderTranslation, ProviderError> {
-    match status {
-        200..=299 => read_translation(body),
-        401 => Err(authentication_failure(AuthFailure::InvalidKey)),
-        403 => Err(match azure_error_code(body) {
-            Some(403001) => ProviderError::QuotaExceeded {
-                provider: ProviderId::Azure,
-            },
-            Some(403000) => authentication_failure(AuthFailure::ResourceNotAuthorized),
-            // The ticket's fallback: a 403 without a recognised code is still an
-            // authentication failure, never a quota one.
-            _ => authentication_failure(AuthFailure::InvalidKey),
-        }),
-        // A rate limit is a retry, not a ban: `Unavailable` is deliberately not
-        // a session-skip failure.
-        429 => Err(ProviderError::Unavailable {
-            reason: "Azure is rate-limiting requests; try again shortly".to_owned(),
-        }),
-        500..=599 => Err(ProviderError::Network {
-            provider: ProviderId::Azure,
-            message: format!("Azure answered HTTP {status}"),
-        }),
-        _ => Err(ProviderError::MalformedResponse {
-            provider: ProviderId::Azure,
-            message: format!("Azure answered HTTP {status}: {body}"),
-        }),
+    if (200..=299).contains(&status) {
+        return read_translation(body);
     }
-}
-
-fn authentication_failure(cause: AuthFailure) -> ProviderError {
-    ProviderError::AuthenticationFailed {
-        provider: ProviderId::Azure,
-        cause,
-    }
-}
-
-/// Azure's error envelope carries a numeric code: `403001` is the free quota,
-/// `403000` is the resource refusing the request. Anything else is unreadable.
-fn azure_error_code(body: &str) -> Option<i64> {
-    let envelope: serde_json::Value = serde_json::from_str(body).ok()?;
-    let code = &envelope.get("error")?.get("code")?;
-    code.as_i64()
-        .or_else(|| code.as_str().and_then(|code| code.parse().ok()))
+    Err(
+        failure::status(&FAILURES, status, body)
+            .expect("Azure's failure policy settles every non-success status"),
+    )
 }
 
 fn read_translation(body: &str) -> Result<ProviderTranslation, ProviderError> {
-    let mut results: Vec<TranslationResult> =
-        serde_json::from_str(body).map_err(|error| ProviderError::MalformedResponse {
-            provider: ProviderId::Azure,
-            message: format!("the body was not the expected JSON: {error}"),
-        })?;
+    let mut results: Vec<TranslationResult> = serde_json::from_str(body).map_err(|error| {
+        FAILURES.malformed(format!("the body was not the expected JSON: {error}"))
+    })?;
     let result = results
         .drain(..)
         .next()
-        .ok_or_else(|| ProviderError::MalformedResponse {
-            provider: ProviderId::Azure,
-            message: "the response carried no translation result".to_owned(),
-        })?;
+        .ok_or_else(|| FAILURES.malformed("the response carried no translation result"))?;
     let text = result
         .translations
         .into_iter()
@@ -228,10 +213,7 @@ fn read_translation(body: &str) -> Result<ProviderTranslation, ProviderError> {
         .map(|translation| translation.text)
         .unwrap_or_default();
     if text.trim().is_empty() {
-        return Err(ProviderError::MalformedResponse {
-            provider: ProviderId::Azure,
-            message: "the response carried no translated text".to_owned(),
-        });
+        return Err(FAILURES.malformed("the response carried no translated text"));
     }
     Ok(ProviderTranslation {
         text,
@@ -245,6 +227,7 @@ fn read_translation(body: &str) -> Result<ProviderTranslation, ProviderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::HttpError;
     use crate::testing::{FakeCredentials, FakeHttpClient};
 
     fn request(text: &str, source: Option<Language>) -> TranslateRequest {
@@ -396,7 +379,10 @@ mod tests {
             keyed(&http)
                 .translate(&vietnamese_to_english("Xin chào"))
                 .expect_err("the key is wrong"),
-            authentication_failure(AuthFailure::InvalidKey)
+            ProviderError::AuthenticationFailed {
+                provider: ProviderId::Azure,
+                cause: AuthFailure::InvalidKey,
+            }
         );
     }
 
@@ -426,7 +412,10 @@ mod tests {
             keyed(&http)
                 .translate(&vietnamese_to_english("Xin chào"))
                 .expect_err("the resource refuses"),
-            authentication_failure(AuthFailure::ResourceNotAuthorized)
+            ProviderError::AuthenticationFailed {
+                provider: ProviderId::Azure,
+                cause: AuthFailure::ResourceNotAuthorized,
+            }
         );
     }
 
@@ -437,7 +426,10 @@ mod tests {
             keyed(&http)
                 .translate(&vietnamese_to_english("Xin chào"))
                 .expect_err("the request is refused"),
-            authentication_failure(AuthFailure::InvalidKey)
+            ProviderError::AuthenticationFailed {
+                provider: ProviderId::Azure,
+                cause: AuthFailure::InvalidKey,
+            }
         );
     }
 
