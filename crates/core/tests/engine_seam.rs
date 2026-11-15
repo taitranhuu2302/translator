@@ -5,14 +5,15 @@
 use std::sync::Arc;
 
 use translator_core::testing::{
-    FakeCapture, FakeCredentials, FakeProvider, InMemoryHistory, InMemorySettings, RecordingSpeech,
-    SpokenUtterance,
+    FakeCapture, FakeCredentials, FakeHttpClient, FakeProvider, InMemoryHistory, InMemorySettings,
+    RecordingSpeech, SpokenUtterance,
 };
 use translator_core::{
-    CachedProvider, CaptureError, Direction, EngineError, HistoryEntry, HistoryStore, ImproveDelta,
-    ImprovePart, ImproveRequest, Improvement, Language, LanguagePair, Mode, PopupPrefill,
-    ProviderError, ProviderId, ProviderTranslation, Selection, Settings, SettingsStore,
-    SpeechError, TextOutcome, Timestamp, TranslateRequest, Translation, TranslatorEngine,
+    AuthFailure, AzureProvider, CachedProvider, CaptureError, Direction, EngineError, GroqProvider,
+    HistoryEntry, HistoryStore, HttpError, ImproveDelta, ImprovePart, ImproveRequest, Improvement,
+    Language, LanguagePair, Mode, MyMemoryProvider, PopupPrefill, ProviderError, ProviderId,
+    ProviderLadder, ProviderTranslation, Selection, Settings, SettingsStore, SpeechError,
+    TextOutcome, Timestamp, TranslateRequest, Translation, TranslationProvider, TranslatorEngine,
 };
 
 struct Harness {
@@ -1524,4 +1525,367 @@ fn purging_history_removes_rows_older_than_thirty_days() {
 
     assert_eq!(removed, 1);
     assert_eq!(harness.history.entries().len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// The provider failure table, exercised end to end through the ladder.
+//
+// Every rung's transport and status outcomes are driven through the real
+// provider inside a real ladder. The assertions are on what the caller can see:
+// the typed error, whether the rung is skipped for the session, and how many
+// times the wire was touched. None of them names the table's internals.
+
+fn translation_request(text: &str) -> TranslateRequest {
+    TranslateRequest {
+        text: text.to_owned(),
+        source: Some(Language::vietnamese()),
+        target: Language::english(),
+    }
+}
+
+fn azure_rung(http: &FakeHttpClient) -> AzureProvider {
+    AzureProvider::new(
+        Arc::new(http.clone()),
+        Arc::new(FakeCredentials::with_secret(ProviderId::Azure, "azure-key")),
+        Arc::new(|| String::new()),
+    )
+}
+
+fn groq_rung(http: &FakeHttpClient) -> GroqProvider {
+    GroqProvider::new(
+        Arc::new(http.clone()),
+        Arc::new(FakeCredentials::with_secret(ProviderId::Groq, "groq-key")),
+    )
+}
+
+fn my_memory_rung(http: &FakeHttpClient) -> MyMemoryProvider {
+    MyMemoryProvider::new(Arc::new(http.clone()))
+}
+
+/// Ask the single-rung ladder twice. The returned errors are the first and
+/// second attempt; the request count says whether the rung was skipped.
+fn ask_twice(ladder: &ProviderLadder) -> (ProviderError, ProviderError) {
+    let first = ladder
+        .translate(&translation_request("Xin chào"))
+        .expect_err("the single rung fails");
+    let second = ladder
+        .translate(&translation_request("Xin chào"))
+        .expect_err("the single rung still fails");
+    (first, second)
+}
+
+#[test]
+fn an_azure_401_is_an_invalid_key_and_skips_the_rung_for_the_session() {
+    let http = FakeHttpClient::responding_with(401, "{}");
+    let ladder = ProviderLadder::single(ProviderId::Azure, Arc::new(azure_rung(&http)));
+
+    let (first, _) = ask_twice(&ladder);
+
+    assert_eq!(
+        first,
+        ProviderError::AuthenticationFailed {
+            provider: ProviderId::Azure,
+            cause: AuthFailure::InvalidKey,
+        }
+    );
+    assert_eq!(
+        http.requests().len(),
+        1,
+        "an authentication failure must not be tried again this session"
+    );
+    assert_eq!(ladder.skipped(), vec![ProviderId::Azure]);
+}
+
+#[test]
+fn an_azure_403_with_403001_is_an_exhausted_quota_and_skips_the_rung() {
+    let http = FakeHttpClient::responding_with(
+        403,
+        r#"{"error":{"code":403001,"message":"the free quota is exhausted"}}"#,
+    );
+    let ladder = ProviderLadder::single(ProviderId::Azure, Arc::new(azure_rung(&http)));
+
+    let (first, _) = ask_twice(&ladder);
+
+    assert_eq!(
+        first,
+        ProviderError::QuotaExceeded {
+            provider: ProviderId::Azure,
+        }
+    );
+    assert_eq!(http.requests().len(), 1, "a quota failure skips the rung");
+    assert_eq!(ladder.skipped(), vec![ProviderId::Azure]);
+}
+
+#[test]
+fn an_azure_403_with_403000_is_a_resource_not_authorized_failure_and_skips_the_rung() {
+    let http = FakeHttpClient::responding_with(
+        403,
+        r#"{"error":{"code":403000,"message":"the resource is disabled"}}"#,
+    );
+    let ladder = ProviderLadder::single(ProviderId::Azure, Arc::new(azure_rung(&http)));
+
+    let (first, _) = ask_twice(&ladder);
+
+    assert_eq!(
+        first,
+        ProviderError::AuthenticationFailed {
+            provider: ProviderId::Azure,
+            cause: AuthFailure::ResourceNotAuthorized,
+        }
+    );
+    assert_eq!(http.requests().len(), 1, "an auth failure skips the rung");
+    assert_eq!(ladder.skipped(), vec![ProviderId::Azure]);
+}
+
+#[test]
+fn an_azure_403_without_a_recognised_code_falls_back_to_a_bad_key_and_skips() {
+    let http = FakeHttpClient::responding_with(403, "Forbidden");
+    let ladder = ProviderLadder::single(ProviderId::Azure, Arc::new(azure_rung(&http)));
+
+    let (first, _) = ask_twice(&ladder);
+
+    assert_eq!(
+        first,
+        ProviderError::AuthenticationFailed {
+            provider: ProviderId::Azure,
+            cause: AuthFailure::InvalidKey,
+        }
+    );
+    assert_eq!(http.requests().len(), 1, "an auth failure skips the rung");
+    assert_eq!(ladder.skipped(), vec![ProviderId::Azure]);
+}
+
+#[test]
+fn a_rate_limit_is_the_providers_sentence_and_does_not_skip_the_rung() {
+    let azure_http = FakeHttpClient::responding_with(429, "{}");
+    let groq_http = FakeHttpClient::responding_with(429, "{}");
+    let my_memory_http = FakeHttpClient::responding_with(429, "");
+    let cases: Vec<(ProviderId, Arc<dyn TranslationProvider>, FakeHttpClient, &str)> = vec![
+        (
+            ProviderId::Azure,
+            Arc::new(azure_rung(&azure_http)),
+            azure_http,
+            "Azure is rate-limiting requests; try again shortly",
+        ),
+        (
+            ProviderId::Groq,
+            Arc::new(groq_rung(&groq_http)),
+            groq_http,
+            "Groq is rate-limiting requests; try again shortly",
+        ),
+        (
+            ProviderId::MyMemory,
+            Arc::new(my_memory_rung(&my_memory_http)),
+            my_memory_http,
+            "MyMemory is rate-limiting requests; try again shortly",
+        ),
+    ];
+
+    for (provider, rung, http, reason) in cases {
+        let ladder = ProviderLadder::single(provider, rung);
+        let error = ladder
+            .translate(&translation_request("Xin chào"))
+            .expect_err("the rate-limited rung fails");
+
+        assert_eq!(
+            error,
+            ProviderError::Unavailable {
+                reason: reason.to_owned(),
+            },
+            "{provider} must keep its own rate-limit sentence"
+        );
+        assert_eq!(http.requests().len(), 1);
+        assert!(
+            ladder.skipped().is_empty(),
+            "a 429 is a retry, not a session ban for {provider}"
+        );
+    }
+}
+
+#[test]
+fn a_rate_limit_is_asked_again_on_the_next_request() {
+    let http = FakeHttpClient::responding_with(429, "{}");
+    let ladder = ProviderLadder::single(ProviderId::Azure, Arc::new(azure_rung(&http)));
+
+    let (first, second) = ask_twice(&ladder);
+
+    assert_eq!(
+        first,
+        ProviderError::Unavailable {
+            reason: "Azure is rate-limiting requests; try again shortly".to_owned(),
+        }
+    );
+    assert_eq!(second, first);
+    assert_eq!(http.requests().len(), 2, "a 429 leaves the rung in the ladder");
+    assert!(ladder.skipped().is_empty());
+}
+
+#[test]
+fn a_server_error_uses_each_rungs_declared_family_and_message() {
+    let azure_http = FakeHttpClient::responding_with(500, "");
+    let azure = ProviderLadder::single(ProviderId::Azure, Arc::new(azure_rung(&azure_http)));
+    assert_eq!(
+        azure.translate(&translation_request("Xin chào")).unwrap_err(),
+        ProviderError::Network {
+            provider: ProviderId::Azure,
+            message: "Azure answered HTTP 500".to_owned(),
+        }
+    );
+
+    let groq_http = FakeHttpClient::responding_with(500, "oops");
+    let groq = ProviderLadder::single(ProviderId::Groq, Arc::new(groq_rung(&groq_http)));
+    assert_eq!(
+        groq.translate(&translation_request("Xin chào")).unwrap_err(),
+        ProviderError::Network {
+            provider: ProviderId::Groq,
+            message: "Groq answered HTTP 500".to_owned(),
+        }
+    );
+    assert_eq!(
+        groq.improve(&ImproveRequest {
+            text: "He go home.".to_owned(),
+        })
+        .unwrap_err(),
+        ProviderError::Network {
+            provider: ProviderId::Groq,
+            message: "Groq answered HTTP 500".to_owned(),
+        },
+        "Improve and Translate share the same server-error policy"
+    );
+
+    let my_memory_http = FakeHttpClient::responding_with(503, "");
+    let my_memory =
+        ProviderLadder::single(ProviderId::MyMemory, Arc::new(my_memory_rung(&my_memory_http)));
+    assert_eq!(
+        my_memory
+            .translate(&translation_request("Xin chào"))
+            .unwrap_err(),
+        ProviderError::Unavailable {
+            reason: "MyMemory answered HTTP 503".to_owned(),
+        },
+        "MyMemory reports a server error as Unavailable, not Network"
+    );
+}
+
+#[test]
+fn groqs_temporary_statuses_are_its_sentence_and_do_not_skip_the_rung() {
+    for status in [422, 498] {
+        let http = FakeHttpClient::responding_with(status, "{}");
+        let ladder = ProviderLadder::single(ProviderId::Groq, Arc::new(groq_rung(&http)));
+
+        let (first, second) = ask_twice(&ladder);
+
+        assert_eq!(
+            first,
+            ProviderError::Unavailable {
+                reason: format!("Groq could not serve this request right now (HTTP {status})"),
+            }
+        );
+        assert_eq!(second, first);
+        assert_eq!(http.requests().len(), 2, "HTTP {status} is not a session ban");
+        assert!(ladder.skipped().is_empty());
+    }
+}
+
+#[test]
+fn mymemorys_body_level_quota_signal_is_a_quota_failure_that_skips_the_rung() {
+    let body = r#"{"responseData":{"translatedText":"MYMEMORY WARNING: YOU USED ALL AVAILABLE FREE TRANSLATIONS FOR TODAY"},
+                   "responseStatus":200,"quotaFinished":true,"responseDetails":""}"#;
+    let http = FakeHttpClient::responding_with(200, body);
+    let ladder =
+        ProviderLadder::single(ProviderId::MyMemory, Arc::new(my_memory_rung(&http)));
+
+    let (first, _) = ask_twice(&ladder);
+
+    assert_eq!(
+        first,
+        ProviderError::QuotaExceeded {
+            provider: ProviderId::MyMemory,
+        }
+    );
+    assert_eq!(
+        http.requests().len(),
+        1,
+        "MyMemory's quota lives in the body of a 200, and it skips the rung"
+    );
+    assert_eq!(ladder.skipped(), vec![ProviderId::MyMemory]);
+}
+
+#[test]
+fn an_unrecognised_status_is_a_malformed_response_with_the_rungs_body_detail() {
+    let azure_http = FakeHttpClient::responding_with(404, "no such resource");
+    let azure = ProviderLadder::single(ProviderId::Azure, Arc::new(azure_rung(&azure_http)));
+    assert_eq!(
+        azure.translate(&translation_request("Xin chào")).unwrap_err(),
+        ProviderError::MalformedResponse {
+            provider: ProviderId::Azure,
+            message: "Azure answered HTTP 404: no such resource".to_owned(),
+        }
+    );
+
+    let groq_http = FakeHttpClient::responding_with(
+        400,
+        r#"{"error":{"message":"json_object mode needs the word JSON"}}"#,
+    );
+    let groq = ProviderLadder::single(ProviderId::Groq, Arc::new(groq_rung(&groq_http)));
+    assert_eq!(
+        groq.translate(&translation_request("Xin chào")).unwrap_err(),
+        ProviderError::MalformedResponse {
+            provider: ProviderId::Groq,
+            message: "Groq answered HTTP 400: json_object mode needs the word JSON".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn a_transport_failure_maps_the_same_way_for_every_rung() {
+    let unreachable = || {
+        FakeHttpClient::failing_with(HttpError::Unreachable {
+            message: "no route to host".to_owned(),
+        })
+    };
+    let request_failed = || {
+        FakeHttpClient::failing_with(HttpError::Request {
+            message: "the request was malformed".to_owned(),
+        })
+    };
+
+    let offline_cases: Vec<(ProviderId, Arc<dyn TranslationProvider>)> = vec![
+        (ProviderId::Azure, Arc::new(azure_rung(&unreachable()))),
+        (ProviderId::Groq, Arc::new(groq_rung(&unreachable()))),
+        (ProviderId::MyMemory, Arc::new(my_memory_rung(&unreachable()))),
+    ];
+    let failed_cases: Vec<(ProviderId, Arc<dyn TranslationProvider>)> = vec![
+        (ProviderId::Azure, Arc::new(azure_rung(&request_failed()))),
+        (ProviderId::Groq, Arc::new(groq_rung(&request_failed()))),
+        (
+            ProviderId::MyMemory,
+            Arc::new(my_memory_rung(&request_failed())),
+        ),
+    ];
+
+    for (provider, rung) in offline_cases {
+        let ladder = ProviderLadder::single(provider, rung);
+        assert_eq!(
+            ladder
+                .translate(&translation_request("Xin chào"))
+                .unwrap_err(),
+            ProviderError::Offline,
+            "{provider} must map an unreachable network the same way"
+        );
+    }
+
+    for (provider, rung) in failed_cases {
+        let ladder = ProviderLadder::single(provider, rung);
+        assert_eq!(
+            ladder
+                .translate(&translation_request("Xin chào"))
+                .unwrap_err(),
+            ProviderError::Network {
+                provider,
+                message: "the request was malformed".to_owned(),
+            },
+            "{provider} must name itself in a request-level network failure"
+        );
+    }
 }

@@ -3,6 +3,7 @@
 
 pub mod azure;
 pub mod cache;
+mod failure;
 pub mod groq;
 pub mod improve_stream;
 pub mod ladder;

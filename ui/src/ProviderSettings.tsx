@@ -6,8 +6,8 @@ import {
   groqStatusLine,
   myMemoryStatusLine,
   regionChanged,
-  withAzureRegion,
 } from "./providerStatus";
+import { settingsWriter } from "./settingsWrite";
 
 /**
  * The provider rows of the Settings surface: whether Azure and Groq have a key
@@ -111,20 +111,20 @@ export function ProviderSettings({
   };
 
   const saveRegion = async () => {
-    const next = withAzureRegion(settings, regionDraft);
     setBusy(true);
     setNotice(null);
     try {
-      await ipc.saveSettings(next);
-      onSettingsSaved(next);
-      setRegionDraft(next.azure_region);
-      setNotice(
-        next.azure_region.length === 0
-          ? "Region cleared: a global Azure resource sends no region header."
-          : `Region saved: ${next.azure_region}.`,
-      );
-    } catch (reason) {
-      setNotice(`The region could not be saved: ${describe(reason)}`);
+      const outcome = await settingsWriter.change({
+        kind: "azure_region",
+        region: regionDraft,
+      });
+      if (outcome.mirror === null) {
+        setNotice(outcome.problem);
+        return;
+      }
+      onSettingsSaved(outcome.mirror);
+      setRegionDraft(outcome.mirror.azure_region);
+      setNotice(outcome.notice);
     } finally {
       setBusy(false);
     }
