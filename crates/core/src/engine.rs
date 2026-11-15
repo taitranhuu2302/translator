@@ -48,11 +48,11 @@ impl TranslatorEngine {
     /// A Selection that is only whitespace is nothing selected, the same as not
     /// selecting at all: it is refused before a provider or history is touched.
     pub fn quick_translate(&self) -> Result<QuickTranslation, EngineError> {
-        let settings = self.settings.load()?;
         let selection = self.capture.read_selection()?;
         if is_blank(&selection.text) {
             return Err(EngineError::Capture(CaptureError::NothingSelected));
         }
+        let settings = self.settings.load()?;
         let (translation, direction) = resolve_translation(
             self.provider.as_ref(),
             &selection.text,
@@ -76,11 +76,11 @@ impl TranslatorEngine {
     /// before a provider is consulted, history is written, or the app is asked
     /// to accept a replacement.
     pub fn replace_selection(&self) -> Result<Replacement, EngineError> {
-        let settings = self.settings.load()?;
         let selection = self.capture.read_selection()?;
         if is_blank(&selection.text) {
             return Err(EngineError::Capture(CaptureError::NothingSelected));
         }
+        let settings = self.settings.load()?;
         let (translation, direction) = resolve_translation(
             self.provider.as_ref(),
             &selection.text,
