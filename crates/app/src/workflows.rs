@@ -14,7 +14,7 @@
 use tauri::{AppHandle, Manager};
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
-use translator_core::{Settings, SettingsStore};
+use translator_core::{EngineError, Replacement, Settings, SettingsStore};
 
 use crate::panel;
 use crate::shortcuts::ShortcutAction;
@@ -29,7 +29,6 @@ pub trait LoginItem {
 
 /// The Quick Translate popup. Hiding and showing are AppKit work; the workflow
 /// only states the order.
-#[allow(dead_code)] // Driven by the Replace workflow in ticket 09.
 pub trait PanelPresenter {
     fn hide(&self) -> Result<(), String>;
     fn show(&self) -> Result<(), String>;
@@ -48,6 +47,63 @@ pub trait KeyRegistry {
 #[allow(dead_code)] // Driven by the shortcut apply workflow in ticket 10.
 pub trait ShortcutRoute {
     fn set_route(&self, action: ShortcutAction, shortcut: Option<Shortcut>);
+}
+
+/// What happened to the popup after a failed Replace.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PopupRestore {
+    /// The Replace had no popup in its flow, so there was nothing to bring back.
+    NoPopup,
+    /// The popup was shown again so the user can retry or copy.
+    Restored,
+    /// The popup could not be brought back; `problem` is the presenter's
+    /// sentence, which the command logs rather than swallowing.
+    Failed(String),
+}
+
+/// What a Replace left behind.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReplaceOutcome {
+    /// The Selection was replaced; the popup stays hidden.
+    Replaced(Replacement),
+    /// The Replace failed. `restore` says what became of the popup, so a
+    /// popup that could not be brought back is never confused with the Replace
+    /// failure itself.
+    Failed {
+        error: EngineError,
+        restore: PopupRestore,
+    },
+}
+
+/// Hide the popup, run the Replace, and show the popup again when it fails.
+///
+/// The order is the same for every caller that replaces. A caller with no popup
+/// in its flow passes `None`: the operation and its failure still go through
+/// this one function, but there is nothing to hide or bring back.
+pub fn replace(
+    panel: Option<&dyn PanelPresenter>,
+    replace: impl FnOnce() -> Result<Replacement, EngineError>,
+) -> ReplaceOutcome {
+    if let Some(panel) = panel {
+        if let Err(problem) = panel.hide() {
+            // A popup that stays up must not stop the Replace; it is worth a
+            // line because the clipboard fallback would paste into it.
+            eprintln!("Translator: the popup was not hidden before Replace: {problem}");
+        }
+    }
+    match replace() {
+        Ok(replacement) => ReplaceOutcome::Replaced(replacement),
+        Err(error) => {
+            let restore = match panel {
+                None => PopupRestore::NoPopup,
+                Some(panel) => match panel.show() {
+                    Ok(()) => PopupRestore::Restored,
+                    Err(problem) => PopupRestore::Failed(problem),
+                },
+            };
+            ReplaceOutcome::Failed { error, restore }
+        }
+    }
 }
 
 /// What changing the login item left behind. `enabled` is the login item's
@@ -154,19 +210,16 @@ impl LoginItem for ShellLoginItem {
 
 /// The real popup. The command has already put the workflow on the main thread,
 /// so this calls AppKit directly.
-#[allow(dead_code)] // Driven by the Replace workflow in ticket 09.
 pub struct ShellPanelPresenter {
     app: AppHandle,
 }
 
-#[allow(dead_code)]
 impl ShellPanelPresenter {
     pub fn new(app: AppHandle) -> Self {
         Self { app }
     }
 }
 
-#[allow(dead_code)]
 impl PanelPresenter for ShellPanelPresenter {
     fn hide(&self) -> Result<(), String> {
         panel::hide(&self.app);
@@ -234,7 +287,129 @@ mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
     use std::sync::Mutex;
-    use translator_core::{Settings, SettingsError};
+    use translator_core::{
+        CaptureError, EngineError, Language, ProviderId, Replacement, Settings, SettingsError,
+        Translation,
+    };
+
+    fn a_replacement() -> Replacement {
+        Replacement {
+            source_text: "Xin chào".to_owned(),
+            translation: Translation {
+                text: "Hello".to_owned(),
+                provider: ProviderId::MyMemory,
+                detected_source: None,
+                target: Language::english(),
+            },
+        }
+    }
+
+    struct FakePanelPresenter {
+        refuse_show: bool,
+        calls: RefCell<Vec<&'static str>>,
+    }
+
+    impl FakePanelPresenter {
+        fn new() -> Self {
+            Self {
+                refuse_show: false,
+                calls: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn refusing_to_show() -> Self {
+            Self {
+                refuse_show: true,
+                ..Self::new()
+            }
+        }
+
+        fn calls(&self) -> Vec<&'static str> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl PanelPresenter for FakePanelPresenter {
+        fn hide(&self) -> Result<(), String> {
+            self.calls.borrow_mut().push("hide");
+            Ok(())
+        }
+
+        fn show(&self) -> Result<(), String> {
+            self.calls.borrow_mut().push("show");
+            if self.refuse_show {
+                Err("the panel is gone".to_owned())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn a_successful_replace_hides_the_popup_and_never_shows_it_again() {
+        let panel = FakePanelPresenter::new();
+
+        let outcome = replace(Some(&panel), || Ok(a_replacement()));
+
+        assert_eq!(outcome, ReplaceOutcome::Replaced(a_replacement()));
+        assert_eq!(panel.calls(), vec!["hide"]);
+    }
+
+    #[test]
+    fn a_failed_replace_hides_once_and_brings_the_popup_back_once() {
+        let panel = FakePanelPresenter::new();
+        let error = EngineError::Capture(CaptureError::NotWritable);
+
+        let outcome = replace(Some(&panel), || Err(error.clone()));
+
+        assert_eq!(
+            outcome,
+            ReplaceOutcome::Failed {
+                error,
+                restore: PopupRestore::Restored,
+            }
+        );
+        assert_eq!(panel.calls(), vec!["hide", "show"]);
+    }
+
+    #[test]
+    fn a_popup_that_cannot_come_back_is_reported_beside_the_replace_failure() {
+        let panel = FakePanelPresenter::refusing_to_show();
+        let error = EngineError::Capture(CaptureError::SecureInput);
+
+        let outcome = replace(Some(&panel), || Err(error.clone()));
+
+        assert_eq!(
+            outcome,
+            ReplaceOutcome::Failed {
+                error,
+                restore: PopupRestore::Failed("the panel is gone".to_owned()),
+            }
+        );
+        assert_eq!(panel.calls(), vec!["hide", "show"]);
+    }
+
+    #[test]
+    fn a_replace_with_no_popup_runs_the_operation_and_never_shows_one() {
+        let outcome = replace(None, || Ok(a_replacement()));
+
+        assert_eq!(outcome, ReplaceOutcome::Replaced(a_replacement()));
+    }
+
+    #[test]
+    fn a_replace_with_no_popup_surfaces_its_failure_without_a_restore() {
+        let error = EngineError::Capture(CaptureError::NothingToReplace);
+
+        let outcome = replace(None, || Err(error.clone()));
+
+        assert_eq!(
+            outcome,
+            ReplaceOutcome::Failed {
+                error,
+                restore: PopupRestore::NoPopup,
+            }
+        );
+    }
 
     fn preference(start_at_login: bool) -> Settings {
         Settings {
