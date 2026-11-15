@@ -643,22 +643,71 @@ fn show_read_aloud_failure(app: &AppHandle, error: &EngineError) {
 }
 
 /// Apply one shortcut change. The rules — invalid, already in use, no change,
-/// macOS refusing, the settings file refusing — live in `shortcuts.rs`; the
-/// command only carries the window's request and answers what happened.
+/// macOS refusing, the settings file refusing — live in `shortcuts.rs` and the
+/// apply order in `workflows.rs`; the command only hops to the main thread and
+/// refreshes the tray once the hop has returned.
 #[tauri::command]
 async fn rebind_shortcut(
     app: AppHandle,
+    state: State<'_, AppState>,
     action: shortcuts::ShortcutAction,
     binding: String,
 ) -> Result<shortcuts::RebindResult, ()> {
-    shortcuts::rebind_shortcut(&app, action, &binding)
+    let settings = Arc::clone(&state.settings);
+    let outcome = main_thread::on_main_thread(&app, move |handle| {
+        workflows::rebind_shortcut(
+            &workflows::ShellKeyRegistry::new(handle.clone()),
+            &workflows::ShellShortcutRoute::new(handle.clone()),
+            settings.as_ref(),
+            action,
+            &binding,
+        )
+    });
+    let outcome = match outcome {
+        Some(Ok(outcome)) => outcome,
+        Some(Err(())) => return Err(()),
+        None => {
+            eprintln!("Translator: the shortcut change did not run: the main thread did not answer");
+            return Err(());
+        }
+    };
+    if outcome.applied {
+        app.state::<AppState>().forget_conflict(action);
+        tray::refresh_tray(&app, &outcome.settings.shortcuts);
+    }
+    Ok(shortcuts::RebindResult {
+        binding: outcome.binding,
+        problem: outcome.problem,
+    })
 }
 
 /// Put the shipped shortcuts and the default pair back. History and provider
-/// keys are not touched.
+/// keys are not touched. The reset reuses the apply sequence; the command only
+/// clears the launch conflicts and refreshes the tray once the hop has returned.
 #[tauri::command]
-async fn reset_shortcuts_and_language_pair(app: AppHandle) -> Result<shortcuts::ResetOutcome, ()> {
-    shortcuts::reset_shortcuts_and_language_pair(&app)
+async fn reset_shortcuts_and_language_pair(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<shortcuts::ResetOutcome, ()> {
+    let settings = Arc::clone(&state.settings);
+    let outcome = main_thread::on_main_thread(&app, move |handle| {
+        workflows::reset_shortcuts(
+            &workflows::ShellKeyRegistry::new(handle.clone()),
+            &workflows::ShellShortcutRoute::new(handle.clone()),
+            settings.as_ref(),
+        )
+    });
+    let outcome = match outcome {
+        Some(Ok(outcome)) => outcome,
+        Some(Err(())) => return Err(()),
+        None => {
+            eprintln!("Translator: the shortcuts were not reset: the main thread did not answer");
+            return Err(());
+        }
+    };
+    app.state::<AppState>().clear_conflicts();
+    tray::refresh_tray(&app, &outcome.settings.shortcuts);
+    Ok(outcome)
 }
 
 /// What changing the login item left behind. `enabled` is the login item's
