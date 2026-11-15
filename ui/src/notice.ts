@@ -40,6 +40,15 @@ export interface Notice {
 
 /** Turn any engine failure into a notice. */
 export function noticeFor(error: EngineError): Notice {
+  // The blank rule's outcome is the one string-shaped engine error: there is
+  // nothing to translate, so it is an input condition, not a provider fault.
+  if (typeof error === "string") {
+    return {
+      kind: "capture",
+      title: "There is nothing to translate.",
+      detail: "Select or type some text, then try again.",
+    };
+  }
   if ("capture" in error) {
     return noticeForCapture(error.capture);
   }

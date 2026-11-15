@@ -193,6 +193,12 @@ impl TranslatorEngine {
         mode: Mode,
         direction: Option<Direction>,
     ) -> Result<TextOutcome, EngineError> {
+        // The blank rule lives at the engine's door, before settings or any
+        // provider is touched, so no caller can send a space over the network.
+        // Trimming decides only: `text` itself is forwarded unchanged.
+        if text.trim().is_empty() {
+            return Err(EngineError::NothingToTranslate);
+        }
         match mode {
             Mode::Translate => {
                 let (translation, direction) = match direction {
@@ -221,20 +227,17 @@ impl TranslatorEngine {
     /// produced both fields is an error, and the view replaces what it showed
     /// with these two values on done.
     ///
-    /// Whitespace-only text has nothing to improve: it answers with two empty
-    /// parts, never touches the network (or the Keychain) and records nothing.
-    /// Every successful improvement is recorded exactly once, whichever of the
-    /// two entry points produced it.
+    /// Whitespace-only text has nothing to improve: it is refused with
+    /// `NothingToTranslate`, never touches the network (or the Keychain) and
+    /// records nothing. Every successful improvement is recorded exactly once,
+    /// whichever of the two entry points produced it.
     pub fn improve_streaming(
         &self,
         text: &str,
         sink: &mut dyn FnMut(&ImproveDelta),
     ) -> Result<Improvement, EngineError> {
         if text.trim().is_empty() {
-            return Ok(Improvement {
-                corrected: String::new(),
-                better: String::new(),
-            });
+            return Err(EngineError::NothingToTranslate);
         }
         let improvement = self.provider.improve_streaming(
             &ImproveRequest {
