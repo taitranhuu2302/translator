@@ -75,47 +75,9 @@ pub enum ProviderError {
     },
 }
 
-impl std::fmt::Display for ProviderError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProviderError::NotConfigured => {
-                formatter.write_str("no translation provider is configured")
-            }
-            ProviderError::MissingKey { provider } => {
-                write!(formatter, "{provider} needs an API key. Add one in Settings.")
-            }
-            ProviderError::QuotaExceeded { provider } => write!(
-                formatter,
-                "{provider} has used up its free translation quota; it works again when the quota resets"
-            ),
-            ProviderError::AuthenticationFailed {
-                provider,
-                cause: AuthFailure::InvalidKey,
-            } => write!(
-                formatter,
-                "{provider} rejected its key. Enter a new key in Settings."
-            ),
-            ProviderError::AuthenticationFailed {
-                provider,
-                cause: AuthFailure::ResourceNotAuthorized,
-            } => write!(
-                formatter,
-                "{provider} refused the request for this resource. Check the Azure resource: it may be disabled, suspended, or in another region."
-            ),
-            ProviderError::Offline => formatter.write_str("the machine is offline"),
-            ProviderError::Network { provider, message } => {
-                write!(formatter, "{provider} could not be reached: {message}")
-            }
-            ProviderError::MalformedResponse { provider, message } => {
-                write!(formatter, "{provider} returned a malformed response: {message}")
-            }
-            ProviderError::Unavailable { reason } => {
-                write!(formatter, "the provider is unavailable: {reason}")
-            }
-        }
-    }
-}
-
+// `Display` for `ProviderError` lives beside the provider failure table, in
+// `providers::failure`, so a provider's words sit next to the code table that
+// selects them.
 impl std::error::Error for ProviderError {}
 
 /// Why an HTTP request failed before the caller could read a status.
@@ -173,6 +135,11 @@ pub enum CredentialError {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[serde(rename_all = "snake_case")]
 pub enum EngineError {
+    /// Text that is empty after trimming is not a translation request. Every
+    /// entry point that accepts text answers this instead of calling a
+    /// provider, writing a history row, or returning an empty success.
+    #[error("there is nothing to translate")]
+    NothingToTranslate,
     #[error("selection capture failed: {0}")]
     Capture(#[from] CaptureError),
     #[error("translation failed: {0}")]
@@ -215,6 +182,14 @@ mod tests {
         assert!(message.contains("Azure"), "{message}");
         assert!(message.contains("resource"), "{message}");
         assert!(!message.to_lowercase().contains("quota"), "{message}");
+    }
+
+    #[test]
+    fn nothing_to_translate_is_a_bare_wire_value() {
+        assert_eq!(
+            serde_json::to_value(EngineError::NothingToTranslate).expect("the error serializes"),
+            serde_json::json!("nothing_to_translate")
+        );
     }
 
     #[test]

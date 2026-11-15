@@ -18,16 +18,56 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 
-use crate::error::{AuthFailure, HttpError, ProviderError};
+use crate::error::{AuthFailure, ProviderError};
 use crate::language::Language;
 use crate::model::{ImproveDelta, Improvement, ProviderId, ProviderTranslation};
 use crate::ports::{
     CredentialStore, HttpClient, HttpMethod, HttpRequest, ImproveRequest, TranslateRequest,
     TranslationProvider,
 };
+use crate::providers::failure::{
+    self, AuthStatus, BodyDetail, FailurePolicy, Meaning, ServerErrors, ServerFamily, Unrecognised,
+};
 use crate::providers::improve_stream::ImprovementStream;
 
 pub const ENDPOINT: &str = "https://api.groq.com/openai/v1/chat/completions";
+
+/// Groq's failure policy: 401 and 403 are both a bad key, 422 and 498 are a
+/// temporary refusal to serve this request, and every other unrecognised status
+/// is a typed malformed response carrying Groq's own `error.message`.
+const FAILURES: FailurePolicy = FailurePolicy {
+    provider: ProviderId::Groq,
+    auth_statuses: &[
+        AuthStatus {
+            status: 401,
+            codes: &[],
+            fallback: Meaning::Authentication(AuthFailure::InvalidKey),
+        },
+        AuthStatus {
+            status: 403,
+            codes: &[],
+            fallback: Meaning::Authentication(AuthFailure::InvalidKey),
+        },
+    ],
+    unavailable_statuses: &[
+        (
+            422,
+            "Groq could not serve this request right now (HTTP {status})",
+        ),
+        (
+            498,
+            "Groq could not serve this request right now (HTTP {status})",
+        ),
+    ],
+    rate_limit_reason: "Groq is rate-limiting requests; try again shortly",
+    server_errors: ServerErrors {
+        family: ServerFamily::Network,
+        from: 500,
+        to: 599,
+    },
+    unrecognised: Unrecognised::Malformed(BodyDetail::ErrorMessage),
+    quota_markers: &[],
+};
 const MODEL: &str = "openai/gpt-oss-120b";
 const CONTENT_TYPE: &str = "application/json";
 const ACCEPT: &str = "text/event-stream";
@@ -60,9 +100,7 @@ impl GroqProvider {
             Ok(_) => Err(ProviderError::MissingKey {
                 provider: ProviderId::Groq,
             }),
-            Err(error) => Err(ProviderError::Unavailable {
-                reason: format!("the Groq key could not be read: {error}"),
-            }),
+            Err(error) => Err(failure::unreadable_key(&FAILURES, &error)),
         }
     }
 
@@ -74,9 +112,7 @@ impl GroqProvider {
         match self.credentials.get(ProviderId::Groq) {
             Ok(Some(key)) if !key.trim().is_empty() => Ok(Some(key)),
             Ok(_) => Ok(None),
-            Err(error) => Err(ProviderError::Unavailable {
-                reason: format!("the Groq key could not be read: {error}"),
-            }),
+            Err(error) => Err(failure::unreadable_key(&FAILURES, &error)),
         }
     }
 
@@ -95,9 +131,8 @@ impl GroqProvider {
             "response_format": { "type": "json_object" },
             "stream": true,
         }))
-        .map_err(|error| ProviderError::MalformedResponse {
-            provider: ProviderId::Groq,
-            message: format!("the request body could not be built: {error}"),
+        .map_err(|error| {
+            FAILURES.malformed(format!("the request body could not be built: {error}"))
         })
     }
 
@@ -134,9 +169,8 @@ impl GroqProvider {
             "temperature": 0,
             "stream": false,
         }))
-        .map_err(|error| ProviderError::MalformedResponse {
-            provider: ProviderId::Groq,
-            message: format!("the request body could not be built: {error}"),
+        .map_err(|error| {
+            FAILURES.malformed(format!("the request body could not be built: {error}"))
         })
     }
 }
@@ -178,12 +212,18 @@ impl TranslationProvider for GroqProvider {
             body: Some(body),
         };
 
-        let response = self.http.execute(&http_request).map_err(map_transport)?;
+        let response = self
+            .http
+            .execute(&http_request)
+            .map_err(|error| failure::transport(&FAILURES, error))?;
         if !(200..=299).contains(&response.status) {
-            return Err(failure_status(response.status, &response.body));
+            return Err(
+                failure::status(&FAILURES, response.status, &response.body)
+                    .expect("Groq's failure policy settles every non-success status"),
+            );
         }
         let answer: ChatAnswer = serde_json::from_str(&response.body).map_err(|error| {
-            malformed(format!("the answer was not the expected shape: {error}"))
+            FAILURES.malformed(format!("the answer was not the expected shape: {error}"))
         })?;
         let text = answer
             .choices
@@ -192,7 +232,7 @@ impl TranslationProvider for GroqProvider {
             .and_then(|choice| choice.message.content)
             .map(|content| content.trim().to_owned())
             .filter(|content| !content.is_empty())
-            .ok_or_else(|| malformed("the answer carried no translation text"))?;
+            .ok_or_else(|| FAILURES.malformed("the answer carried no translation text"))?;
         Ok(ProviderTranslation {
             text,
             provider: ProviderId::Groq,
@@ -259,7 +299,7 @@ impl TranslationProvider for GroqProvider {
                 }
                 true
             })
-            .map_err(map_transport)?;
+            .map_err(|error| failure::transport(&FAILURES, error))?;
 
         // A final line may arrive without its trailing newline.
         if !saw_done && finished.is_none() && failure.is_none() {
@@ -274,25 +314,28 @@ impl TranslationProvider for GroqProvider {
         }
 
         if !(200..=299).contains(&status) {
-            return Err(failure_status(status, &raw));
+            return Err(
+                failure::status(&FAILURES, status, &raw)
+                    .expect("Groq's failure policy settles every non-success status"),
+            );
         }
         if let Some(message) = failure {
-            return Err(malformed(message));
+            return Err(FAILURES.malformed(message));
         }
         if !saw_done && finished.is_none() {
-            return Err(malformed(
+            return Err(FAILURES.malformed(
                 "the stream ended before the model finished the answer",
             ));
         }
         match finished.as_deref() {
             Some("stop") | None => {}
             Some("length") => {
-                return Err(malformed(
+                return Err(FAILURES.malformed(
                     "the answer was cut off at the token limit before both fields were finished",
                 ))
             }
             Some(other) => {
-                return Err(malformed(format!(
+                return Err(FAILURES.malformed(format!(
                     "the model stopped without an answer ({other})"
                 )))
             }
@@ -302,77 +345,14 @@ impl TranslationProvider for GroqProvider {
         // to show progress; a stream that never produced valid JSON with two
         // non-empty fields is a failure, not a partial answer.
         let improvement: Improvement = serde_json::from_str(&document)
-            .map_err(|error| malformed(format!("the answer was not the expected JSON: {error}")))?;
+            .map_err(|error| FAILURES.malformed(format!("the answer was not the expected JSON: {error}")))?;
         if improvement.corrected.trim().is_empty() {
-            return Err(malformed("the answer carried an empty corrected field"));
+            return Err(FAILURES.malformed("the answer carried an empty corrected field"));
         }
         if improvement.better.trim().is_empty() {
-            return Err(malformed("the answer carried an empty better field"));
+            return Err(FAILURES.malformed("the answer carried an empty better field"));
         }
         Ok(improvement)
-    }
-}
-
-fn malformed(message: impl Into<String>) -> ProviderError {
-    ProviderError::MalformedResponse {
-        provider: ProviderId::Groq,
-        message: message.into(),
-    }
-}
-
-fn map_transport(error: HttpError) -> ProviderError {
-    match error {
-        HttpError::Unreachable { .. } => ProviderError::Offline,
-        HttpError::Request { message } => ProviderError::Network {
-            provider: ProviderId::Groq,
-            message,
-        },
-    }
-}
-
-/// Map a non-2xx answer by its status, as the research note's table does. The
-/// body only sharpens the message; it never changes the family of failure.
-fn failure_status(status: u16, body: &str) -> ProviderError {
-    match status {
-        401 | 403 => ProviderError::AuthenticationFailed {
-            provider: ProviderId::Groq,
-            cause: AuthFailure::InvalidKey,
-        },
-        // A rate limit is a retry, not a ban: `Unavailable` does not skip the
-        // rung for the session.
-        429 => ProviderError::Unavailable {
-            reason: "Groq is rate-limiting requests; try again shortly".to_owned(),
-        },
-        422 | 498 => ProviderError::Unavailable {
-            reason: format!("Groq could not serve this request right now (HTTP {status})"),
-        },
-        500..=599 => ProviderError::Network {
-            provider: ProviderId::Groq,
-            message: format!("Groq answered HTTP {status}"),
-        },
-        _ => malformed(format!(
-            "Groq answered HTTP {status}: {}",
-            body_message(body)
-        )),
-    }
-}
-
-/// The `error.message` of Groq's error envelope, or a short excerpt of the body.
-fn body_message(body: &str) -> String {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(body) {
-        if let Some(message) = value
-            .get("error")
-            .and_then(|error| error.get("message"))
-            .and_then(|message| message.as_str())
-        {
-            return message.to_owned();
-        }
-    }
-    let excerpt: String = body.trim().chars().take(200).collect();
-    if excerpt.is_empty() {
-        "no detail".to_owned()
-    } else {
-        excerpt
     }
 }
 
@@ -508,6 +488,7 @@ fn decode_line(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::HttpError;
     use crate::language::Language;
     use crate::model::ImprovePart;
     use crate::testing::{FakeCredentials, FakeHttpClient};
