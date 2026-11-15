@@ -190,7 +190,7 @@ pub struct ShortcutChange {
     pub previous: Option<Shortcut>,
 }
 
-/// What applying one change left behind. `problem: None` means the combination
+/// What a shortcut change left behind. `problem: None` means the combination
 /// is live, routed and in the settings object; any other value is the sentence
 /// the settings surface shows, and the old binding is where it was.
 #[derive(Clone, Debug)]
@@ -277,16 +277,6 @@ pub fn apply_shortcut(
     }
 }
 
-/// What a rebind left: the binding it was about, the sentence to show when it
-/// did not become live and saved, and the settings that now hold it.
-#[derive(Clone, Debug)]
-pub struct RebindOutcome {
-    pub binding: String,
-    pub problem: Option<String>,
-    pub settings: Settings,
-    pub applied: bool,
-}
-
 /// The whole rebind: decide with the pure planner, then apply. The planner's
 /// refusals (unusable, already in use, no change) never touch a port.
 pub fn rebind_shortcut(
@@ -295,13 +285,13 @@ pub fn rebind_shortcut(
     settings_store: &dyn SettingsStore,
     action: ShortcutAction,
     requested: &str,
-) -> Result<RebindOutcome, ()> {
+) -> Result<ShortcutApplyOutcome, ()> {
     let settings = settings_store.load().map_err(|error| {
         eprintln!("Translator: the shortcut change could not read the settings: {error}");
     })?;
     let plan = shortcuts::plan(action, requested, &settings.shortcuts);
     if let Some(problem) = shortcuts::problem_message(&plan) {
-        return Ok(RebindOutcome {
+        return Ok(ShortcutApplyOutcome {
             binding: plan.binding().to_owned(),
             problem: Some(problem),
             settings,
@@ -310,7 +300,7 @@ pub fn rebind_shortcut(
     }
 
     match plan {
-        Plan::Unchanged { binding } => Ok(RebindOutcome {
+        Plan::Unchanged { binding } => Ok(ShortcutApplyOutcome {
             binding,
             problem: None,
             settings,
@@ -320,26 +310,18 @@ pub fn rebind_shortcut(
             binding,
             shortcut,
             previous,
-        } => {
-            let outcome = apply_shortcut(
-                registry,
-                route,
-                settings_store,
-                settings,
-                ShortcutChange {
-                    action,
-                    binding,
-                    shortcut,
-                    previous,
-                },
-            );
-            Ok(RebindOutcome {
-                binding: outcome.binding,
-                problem: outcome.problem,
-                settings: outcome.settings,
-                applied: outcome.applied,
-            })
-        }
+        } => Ok(apply_shortcut(
+            registry,
+            route,
+            settings_store,
+            settings,
+            ShortcutChange {
+                action,
+                binding,
+                shortcut,
+                previous,
+            },
+        )),
         Plan::Invalid { .. } | Plan::InUse { .. } => {
             unreachable!("a plan with a problem returned above")
         }
