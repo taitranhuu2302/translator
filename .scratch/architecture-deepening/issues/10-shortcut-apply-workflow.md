@@ -48,7 +48,7 @@
 
 | Command | Result |
 | --- | --- |
-| `./scripts/test.sh` | exit 0 — typecheck, UI tests, production build, IPC boundary, `cargo test --workspace` (43 app + 120 core + 3 dependency-boundary + 63 engine-seam + 22 platform + 2 history-parity) |
+| `./scripts/test.sh` | exit 0 — typecheck, UI tests, production build, IPC boundary, `cargo test --workspace` (43 app + 121 core + 3 dependency-boundary + 78 engine-seam + 24 platform + 2 history-parity, after merging ticket 06) |
 | `cargo test -p translator-app workflows` | 13 passed: the 4 start-at-login tests plus 9 shortcut-apply tests — successful order, refused registration, forced save failure with rollback, unchanged plan, in-use plan, unreadable settings (rebind and reset), reset order with one write, and a shipped default the system refuses |
 
 Carbon registration, the menu bar refresh and the settings-permission cases are
