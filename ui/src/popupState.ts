@@ -6,12 +6,13 @@
  * failure, or dismissed. Keeping the transitions here means the rules are tested
  * without a window, a provider or a running app.
  */
+import { isCurrent, type AnswerToken } from "./answerToken";
 import type { EngineError, PopupPrefill, Translation } from "./ipc";
 import { noticeFor, noticeForCapture, type Notice } from "./notice";
 
 export type PopupState =
   | { phase: "opening" }
-  | { phase: "translating"; source: string }
+  | { phase: "translating"; source: string; token: AnswerToken }
   | { phase: "translated"; source: string; translation: Translation }
   | { phase: "replacing"; source: string; translation: Translation }
   | ({
@@ -24,9 +25,9 @@ export type PopupState =
   | { phase: "dismissed" };
 
 export type PopupEvent =
-  | { type: "prefill"; prefill: PopupPrefill }
-  | { type: "translated"; translation: Translation }
-  | { type: "failed"; error: EngineError }
+  | { type: "prefill"; prefill: PopupPrefill; token: AnswerToken }
+  | { type: "translated"; translation: Translation; token: AnswerToken }
+  | { type: "failed"; error: EngineError; token: AnswerToken }
   | { type: "replace_requested" }
   | { type: "replace_failed"; error: EngineError }
   | { type: "dismissed" };
@@ -51,21 +52,22 @@ export function reduce(state: PopupState, event: PopupEvent): PopupState {
       if (source.trim().length === 0) {
         return nothingSelected();
       }
-      return { phase: "translating", source };
+      return { phase: "translating", source, token: event.token };
     }
 
     case "dismissed":
       return { phase: "dismissed" };
 
+    // The token, not the phase, says which open an answer belongs to: two
+    // opens can both be translating, and only the newer token is current.
     case "translated":
-      // Once dismissed, a late answer must not bring the popup back.
-      if (state.phase !== "translating") {
+      if (state.phase !== "translating" || !isCurrent(event.token, state.token)) {
         return state;
       }
       return { phase: "translated", source: state.source, translation: event.translation };
 
     case "failed":
-      if (state.phase !== "translating") {
+      if (state.phase !== "translating" || !isCurrent(event.token, state.token)) {
         return state;
       }
       return failedWith(noticeFor(event.error));
