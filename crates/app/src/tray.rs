@@ -3,8 +3,6 @@
 //! into the real AppKit menu and swaps it in when the bindings or the
 //! Accessibility permission change.
 
-use std::time::Duration;
-
 use tauri::menu::{IsMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::{AppHandle, Manager};
 use translator_core::ShortcutBindings;
@@ -12,10 +10,6 @@ use translator_core::ShortcutBindings;
 use crate::main_thread::on_main_thread;
 use crate::shortcuts::ShortcutAction;
 use crate::AppState;
-
-/// A menu swap is an AppKit call from a worker thread, so it is given the same
-/// bounded wait as the shortcut registrations.
-const MENU_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The tray icon's id. `refresh_tray` finds the icon by it.
 pub const TRAY_ID: &str = "translator";
@@ -161,7 +155,7 @@ pub fn menu(
 /// Accessibility permission is observed to change.
 pub fn refresh_tray(app: &AppHandle, bindings: &ShortcutBindings) {
     let bindings = bindings.clone();
-    let outcome = on_main_thread(app, MENU_TIMEOUT, move |handle| {
+    let outcome = on_main_thread(app, move |handle| {
         let Some(icon) = handle.tray_by_id(TRAY_ID) else {
             eprintln!("Translator: the tray menu was not updated: the menu bar item is missing");
             return;
