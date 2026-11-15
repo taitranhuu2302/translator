@@ -81,4 +81,10 @@ steps 1–3 there are also asserted by `scripts/build.sh`.
   05 and 08 had landed) with no conflicts; the suite and packaging were re-run
   on the merged tree. The copy guard now reports a scan error instead of
   passing, mirroring `scripts/test.sh`'s IPC-boundary check.
+- 2026-11-15 — Code review flagged the identity check living in
+  `scripts/check-identity.sh` rather than being a Rust test. Adjudicated as
+  leave it: D3's "test entry point" is `scripts/test.sh`, which runs the check
+  first, so the rule already runs before the suite; moving it into a Rust test
+  would either duplicate the assertions or make the script the script's own
+  caller. No change made.
 

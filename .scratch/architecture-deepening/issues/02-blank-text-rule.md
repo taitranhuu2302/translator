@@ -74,3 +74,18 @@ Rust serde test and the TS mapper test rather than by a manual run.
   blank-Selection behaviour would be a change beyond this ticket's entry points.
   Worth a follow-up only if a caller beyond the popup ever captures a Selection
   directly.
+- 2026-11-15 — Code-review finding, resolved here: the earlier comment above was
+  adjudicated as the leak story 10 forbids. The platform bridge happens to
+  refuse a whitespace-only Selection, but the engine's own interface still
+  permitted one, so a future caller could reach a provider with a space. One
+  private `is_blank` predicate in `engine.rs` is now shared by
+  `translate_text_in`, `improve_streaming`, `read_aloud`, `quick_translate` and
+  `replace_selection`; a blank captured Selection answers
+  `EngineError::Capture(CaptureError::NothingSelected)` — the classification
+  story 1 and `popup_prefill` already use — before any provider call, history
+  row or `replace_selection` write. `read_aloud` keeps its empty-success
+  behaviour, and `reopen` is untouched. New seam tests drive a fake capture
+  returning `""`, `"   "` and `"\n\t "` through both capture entry points
+  (zero provider calls, zero history rows, no write) and prove a non-blank
+  Selection with surrounding whitespace still translates and replaces
+  unchanged. No user-visible string changed.
