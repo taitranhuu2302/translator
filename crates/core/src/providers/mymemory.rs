@@ -8,14 +8,37 @@ use std::sync::Arc;
 use serde::Deserialize;
 
 use crate::chunking::{chunk_text, join_chunks, MAX_CHUNK_CHARS};
-use crate::error::{HttpError, ProviderError};
+use crate::error::ProviderError;
 use crate::model::{Improvement, ProviderId, ProviderTranslation};
 use crate::ports::{
     HttpClient, HttpMethod, HttpRequest, ImproveRequest, TranslateRequest, TranslationProvider,
 };
 use crate::providers::encode_query_component;
+use crate::providers::failure::{
+    self, FailurePolicy, ServerErrors, ServerFamily, Unrecognised,
+};
 
 pub const ENDPOINT: &str = "https://api.mymemory.translated.net/get";
+
+/// MyMemory's failure policy. Its semantic errors arrive in a 200 body, so a
+/// status it does not name is left to the body; a 5xx is an outage, not a
+/// transport failure. The quota markers are case-insensitive.
+const FAILURES: FailurePolicy = FailurePolicy {
+    provider: ProviderId::MyMemory,
+    auth_statuses: &[],
+    unavailable_statuses: &[],
+    rate_limit_reason: "MyMemory is rate-limiting requests; try again shortly",
+    server_errors: ServerErrors {
+        family: ServerFamily::Unavailable,
+        from: 500,
+        to: u16::MAX,
+    },
+    unrecognised: Unrecognised::ReadBody,
+    quota_markers: &[
+        "MYMEMORY WARNING",
+        "USED ALL AVAILABLE FREE TRANSLATIONS",
+    ],
+};
 
 /// MyMemory, with an injected HTTP client so tests never open a socket.
 pub struct MyMemoryProvider {
@@ -47,7 +70,7 @@ impl MyMemoryProvider {
                 headers: Vec::new(),
                 body: None,
             })
-            .map_err(map_transport)?;
+            .map_err(|error| failure::transport(&FAILURES, error))?;
         read_answer(response.status, &response.body)
     }
 }
@@ -64,10 +87,7 @@ impl TranslationProvider for MyMemoryProvider {
         let source = request
             .source
             .clone()
-            .ok_or_else(|| ProviderError::MalformedResponse {
-                provider: ProviderId::MyMemory,
-                message: "the direction was not resolved before the request".to_owned(),
-            })?;
+            .ok_or_else(|| FAILURES.malformed("the direction was not resolved before the request"))?;
         let chunks = chunk_text(&request.text, MAX_CHUNK_CHARS);
         let mut translated = Vec::with_capacity(chunks.len());
         for chunk in &chunks {
@@ -83,16 +103,6 @@ impl TranslationProvider for MyMemoryProvider {
     /// Improve belongs to the model provider (ticket 08); MyMemory only translates.
     fn improve(&self, _request: &ImproveRequest) -> Result<Improvement, ProviderError> {
         Err(ProviderError::NotConfigured)
-    }
-}
-
-fn map_transport(error: HttpError) -> ProviderError {
-    match error {
-        HttpError::Unreachable { .. } => ProviderError::Offline,
-        HttpError::Request { message } => ProviderError::Network {
-            provider: ProviderId::MyMemory,
-            message,
-        },
     }
 }
 
@@ -114,45 +124,29 @@ struct ResponseData {
     translated_text: Option<String>,
 }
 
-/// Read one response body. `status` is the HTTP status, which only matters for
-/// the transport-level failures (429 and 5xx); every semantic verdict is in the
-/// body.
+/// Read one response body. The table settles 429 and 5xx; everything else is a
+/// semantic verdict in the body, which is exactly what MyMemory's policy says
+/// to read.
 fn read_answer(status: u16, body: &str) -> Result<String, ProviderError> {
-    if status == 429 {
-        // MyMemory's documented rate limit is unverified in practice, and there
-        // is deliberately no `RateLimited` variant: report it as unavailable.
-        return Err(ProviderError::Unavailable {
-            reason: "MyMemory is rate-limiting requests; try again shortly".to_owned(),
-        });
-    }
-    if status >= 500 {
-        return Err(ProviderError::Unavailable {
-            reason: format!("MyMemory answered HTTP {status}"),
-        });
+    if let Some(error) = failure::status(&FAILURES, status, body) {
+        return Err(error);
     }
 
-    let envelope: Envelope =
-        serde_json::from_str(body).map_err(|error| ProviderError::MalformedResponse {
-            provider: ProviderId::MyMemory,
-            message: format!("the body was not the expected JSON: {error}"),
-        })?;
+    let envelope: Envelope = serde_json::from_str(body)
+        .map_err(|error| FAILURES.malformed(format!("the body was not the expected JSON: {error}")))?;
     let details = envelope.response_details;
     let translated = envelope
         .response_data
         .and_then(|data| data.translated_text)
         .unwrap_or_default();
-    let upper_details = details.to_uppercase();
-    let upper_translated = translated.to_uppercase();
 
-    let quota_spent = envelope.quota_finished == Some(true)
-        || upper_details.contains("MYMEMORY WARNING")
-        || upper_details.contains("USED ALL AVAILABLE FREE TRANSLATIONS")
-        || upper_translated.contains("MYMEMORY WARNING")
-        || upper_translated.contains("USED ALL AVAILABLE FREE TRANSLATIONS");
-    if quota_spent {
-        return Err(ProviderError::QuotaExceeded {
-            provider: ProviderId::MyMemory,
-        });
+    if let Some(error) = failure::body_quota(
+        &FAILURES,
+        envelope.quota_finished == Some(true),
+        &details,
+        &translated,
+    ) {
+        return Err(error);
     }
 
     if !is_success_status(&envelope.response_status) {
@@ -163,17 +157,11 @@ fn read_answer(status: u16, body: &str) -> Result<String, ProviderError> {
         } else {
             "MyMemory rejected the request without a reason".to_owned()
         };
-        return Err(ProviderError::MalformedResponse {
-            provider: ProviderId::MyMemory,
-            message,
-        });
+        return Err(FAILURES.malformed(message));
     }
 
     if translated.trim().is_empty() {
-        return Err(ProviderError::MalformedResponse {
-            provider: ProviderId::MyMemory,
-            message: "the response carried no translated text".to_owned(),
-        });
+        return Err(FAILURES.malformed("the response carried no translated text"));
     }
     Ok(html_unescape(&translated))
 }
@@ -234,6 +222,7 @@ fn decode_entity(entity: &str) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::HttpError;
     use crate::language::Language;
     use crate::testing::FakeHttpClient;
 

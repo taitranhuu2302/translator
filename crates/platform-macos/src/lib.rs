@@ -5,6 +5,7 @@
 //! onboarding. The ports still to come are explicit typed failures rather than
 //! code paths that silently succeed.
 
+mod bundle;
 #[cfg(target_os = "macos")]
 mod capture;
 #[cfg(not(target_os = "macos"))]
