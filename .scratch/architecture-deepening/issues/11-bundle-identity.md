@@ -60,7 +60,8 @@
 | `./scripts/test.sh` | exit 0 — identity check, typecheck, UI tests, production build, IPC boundary, `cargo test --workspace` |
 | `./scripts/build.sh` | exit 0 — packages and signs `target/bundle/Translator.app`; build asserts the identifier, the designated requirement and `LSUIElement` |
 | `PlistBuddy` on the packaged `Contents/Info.plist` | `CFBundleIdentifier = com.taitran.translator`, both versions `0.1.0`, `CFBundleExecutable = translator`, `LSUIElement = true`; `codesign -d -r-` gives `identifier "com.taitran.translator" and certificate root = H"0210dfaa…"` |
-| `./scripts/test.sh` after merging `spec/architecture-deepening` | see Comments |
+| `./scripts/test.sh` after merging `spec/architecture-deepening` (`6a3e10f`) | exit 0 — identity check first, 10 UI files / 134 tests, production build, IPC boundary, `cargo test --workspace`: 34 + 121 + 3 + 78 + 24 + 2 passed, 0 failed |
+| `./scripts/build.sh` after the merge | exit 0 — same signed identity; `Identifier=com.taitran.translator`, designated requirement pins it, `LSUIElement` present |
 
 Running from the packaged bundle is the only way to exercise the `NSBundle`
 half of the derivation, and the app is not launched by the agent. The steps are
@@ -76,4 +77,8 @@ steps 1–3 there are also asserted by `scripts/build.sh`.
 - 2026-11-15 — The Keychain service moves with the identifier because it was one
   of the three runtime copies. The identifier itself is unchanged, so this
   release reads the same service and paths as before.
+- 2026-11-15 — Merged `spec/architecture-deepening` at `6a3e10f` (tickets 02, 03,
+  05 and 08 had landed) with no conflicts; the suite and packaging were re-run
+  on the merged tree. The copy guard now reports a scan error instead of
+  passing, mirroring `scripts/test.sh`'s IPC-boundary check.
 

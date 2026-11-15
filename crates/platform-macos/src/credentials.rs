@@ -18,6 +18,7 @@ use translator_core::{CredentialError, ProviderId};
 /// The Keychain service these items live under, derived from the bundle rather
 /// than named again. A rename moves it with the rest of the identity
 /// (docs/adr/0004-stable-signing-from-first-commit.md).
+#[cfg(target_os = "macos")]
 fn service() -> String {
     crate::bundle::identifier()
 }

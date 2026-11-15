@@ -70,7 +70,12 @@ fi
 # The runtime copies were deleted, not re-pointed: no Rust or shell source may
 # name the identifier a second time. If this fires, derive from
 # translator_platform_macos::bundle or read the plist; do not add a constant.
-if offenders="$(grep -rn --include='*.rs' --include='*.sh' -F "$PLIST_ID" crates scripts)"; then
+status=0
+offenders="$(grep -rn --include='*.rs' --include='*.sh' -F "$PLIST_ID" crates scripts)" || status=$?
+if [ "$status" -gt 1 ]; then
+  fail "the copy guard could not scan crates/ and scripts/ (grep exited $status)."
+fi
+if [ -n "$offenders" ]; then
   echo "error: the bundle identifier is authored in $PLIST; these files still copy it:" >&2
   printf '%s\n' "$offenders" >&2
   exit 1
