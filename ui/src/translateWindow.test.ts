@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { AnswerToken } from "./answerToken";
 import type { LanguagePair, Translation } from "./ipc";
 import {
   EMPTY_RESULT,
@@ -76,18 +77,19 @@ describe("swapping a Translate Window translation", () => {
 });
 
 describe("the Translate Window result pane", () => {
-  const started = (): TranslateResult =>
-    reduceResult(EMPTY_RESULT, { type: "started" });
+  const token: AnswerToken = { session: 1, sequence: 1 };
+
+  const started = (at: AnswerToken = token): TranslateResult =>
+    reduceResult(EMPTY_RESULT, { type: "started", token: at });
 
   it("says it is translating while the request is in flight", () => {
-    expect(started()).toEqual({ phase: "translating" });
+    expect(started()).toEqual({ phase: "translating", token });
   });
 
   it("fills the pane with the translation", () => {
-    expect(reduceResult(started(), { type: "translated", translation })).toEqual({
-      phase: "translated",
-      translation,
-    });
+    expect(
+      reduceResult(started(), { type: "translated", translation, token }),
+    ).toEqual({ phase: "translated", translation });
   });
 
   it("puts a typed failure in the pane and names the provider", () => {
@@ -98,6 +100,7 @@ describe("the Translate Window result pane", () => {
           malformed_response: { provider: "my_memory", message: "not JSON" },
         },
       },
+      token,
     });
 
     expect(state.phase).toBe("failed");
@@ -110,6 +113,7 @@ describe("the Translate Window result pane", () => {
     const state = reduceResult(started(), {
       type: "failed",
       error: { provider: "offline" },
+      token,
     });
 
     expect(state.phase).toBe("failed");
@@ -122,10 +126,13 @@ describe("the Translate Window result pane", () => {
     const failed = reduceResult(started(), {
       type: "failed",
       error: { provider: "offline" },
+      token,
     });
+    const retry = { session: 1, sequence: 2 };
 
-    expect(reduceResult(failed, { type: "started" })).toEqual({
+    expect(reduceResult(failed, { type: "started", token: retry })).toEqual({
       phase: "translating",
+      token: retry,
     });
   });
 
@@ -133,6 +140,7 @@ describe("the Translate Window result pane", () => {
     const translated = reduceResult(started(), {
       type: "translated",
       translation,
+      token,
     });
 
     expect(reduceResult(translated, { type: "cleared" })).toEqual(EMPTY_RESULT);
@@ -140,18 +148,42 @@ describe("the Translate Window result pane", () => {
 
   it("ignores an answer that arrives without a request in flight", () => {
     expect(
-      reduceResult(EMPTY_RESULT, { type: "translated", translation }),
+      reduceResult(EMPTY_RESULT, { type: "translated", translation, token }),
     ).toEqual(EMPTY_RESULT);
 
     expect(
       reduceResult(EMPTY_RESULT, {
         type: "failed",
         error: { provider: "offline" },
+        token,
       }),
     ).toEqual(EMPTY_RESULT);
   });
 
+  it("ignores a late answer from an attempt the pane has abandoned", () => {
+    const abandoned: AnswerToken = { session: 1, sequence: 1 };
+    const current: AnswerToken = { session: 1, sequence: 2 };
+    const state = started(current);
+
+    expect(
+      reduceResult(state, {
+        type: "translated",
+        translation,
+        token: abandoned,
+      }),
+    ).toBe(state);
+    expect(
+      reduceResult(state, {
+        type: "failed",
+        error: { provider: "offline" },
+        token: abandoned,
+      }),
+    ).toBe(state);
+  });
+
   it("shows a stored result when an entry is reopened, without translating", () => {
+    // A restored entry answers no request, so it needs no token and applies
+    // from any phase — even one nobody is waiting on.
     expect(
       reduceResult(EMPTY_RESULT, { type: "restored", translation }),
     ).toEqual({ phase: "translated", translation });
@@ -160,6 +192,7 @@ describe("the Translate Window result pane", () => {
     const failed = reduceResult(started(), {
       type: "failed",
       error: { provider: "offline" },
+      token,
     });
     expect(
       reduceResult(failed, { type: "restored", translation }),

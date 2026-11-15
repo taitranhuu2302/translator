@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { AnswerToken } from "./answerToken";
 import type { Improvement } from "./ipc";
 import {
   EMPTY_IMPROVEMENT,
@@ -13,8 +14,10 @@ const improvement: Improvement = {
   better: "He's heading home.",
 };
 
-function started(requestId = 1): ImproveResult {
-  return reduceImprovement(EMPTY_IMPROVEMENT, { type: "started", requestId });
+const token: AnswerToken = { session: 1, sequence: 1 };
+
+function started(at: AnswerToken = token): ImproveResult {
+  return reduceImprovement(EMPTY_IMPROVEMENT, { type: "started", token: at });
 }
 
 function parts(state: ImproveResult): [string, string] {
@@ -28,7 +31,7 @@ describe("the Improve pane", () => {
   it("starts with two empty labelled parts", () => {
     expect(started()).toEqual({
       phase: "improving",
-      requestId: 1,
+      token,
       corrected: "",
       better: "",
     });
@@ -38,25 +41,25 @@ describe("the Improve pane", () => {
     let state = started();
     state = reduceImprovement(state, {
       type: "chunk",
-      requestId: 1,
+      token,
       part: "better",
       text: "He's ",
     });
     state = reduceImprovement(state, {
       type: "chunk",
-      requestId: 1,
+      token,
       part: "corrected",
       text: "He goes ",
     });
     state = reduceImprovement(state, {
       type: "chunk",
-      requestId: 1,
+      token,
       part: "better",
       text: "heading home.",
     });
     state = reduceImprovement(state, {
       type: "chunk",
-      requestId: 1,
+      token,
       part: "corrected",
       text: "home.",
     });
@@ -68,60 +71,63 @@ describe("the Improve pane", () => {
     // The stream stalled half-way; done still has to show the whole answer.
     const stalled = reduceImprovement(started(), {
       type: "chunk",
-      requestId: 1,
+      token,
       part: "corrected",
       text: "He go",
     });
 
     expect(
-      reduceImprovement(stalled, { type: "done", requestId: 1, improvement }),
+      reduceImprovement(stalled, { type: "done", token, improvement }),
     ).toEqual({
       phase: "improved",
-      requestId: 1,
       corrected: "He goes home.",
       better: "He's heading home.",
     });
   });
 
-  it("ignores a chunk from a request that is no longer in flight", () => {
-    const state = started(2);
+  it("ignores a late chunk from an abandoned attempt", () => {
+    const abandoned: AnswerToken = { session: 1, sequence: 1 };
+    const current: AnswerToken = { session: 1, sequence: 2 };
+    const state = started(current);
 
     expect(
       reduceImprovement(state, {
         type: "chunk",
-        requestId: 1,
+        token: abandoned,
         part: "corrected",
         text: "late",
       }),
     ).toBe(state);
   });
 
-  it("ignores a done or failed answer from an abandoned request", () => {
-    const state = started(2);
+  it("ignores a done or failed answer from an abandoned attempt", () => {
+    const abandoned: AnswerToken = { session: 1, sequence: 1 };
+    const current: AnswerToken = { session: 1, sequence: 2 };
+    const state = started(current);
 
     expect(
-      reduceImprovement(state, { type: "done", requestId: 1, improvement }),
+      reduceImprovement(state, { type: "done", token: abandoned, improvement }),
     ).toBe(state);
     expect(
       reduceImprovement(state, {
         type: "failed",
-        requestId: 1,
+        token: abandoned,
         error: { provider: "offline" },
       }),
     ).toBe(state);
   });
 
-  it("ignores an answer once the request has finished", () => {
+  it("ignores an answer once the attempt has finished", () => {
     const finished = reduceImprovement(started(), {
       type: "done",
-      requestId: 1,
+      token,
       improvement,
     });
 
     expect(
       reduceImprovement(finished, {
         type: "chunk",
-        requestId: 1,
+        token,
         part: "better",
         text: "late",
       }),
@@ -131,7 +137,7 @@ describe("the Improve pane", () => {
   it("shows a typed failure and keeps whatever already streamed out of the way", () => {
     const state = reduceImprovement(started(), {
       type: "failed",
-      requestId: 1,
+      token,
       error: {
         provider: { missing_key: { provider: "groq" } },
       },
@@ -147,7 +153,7 @@ describe("the Improve pane", () => {
   it("names the missing key instead of saying no provider is available", () => {
     const state = reduceImprovement(started(), {
       type: "failed",
-      requestId: 1,
+      token,
       error: { provider: { missing_key: { provider: "groq" } } },
     });
 
@@ -159,7 +165,7 @@ describe("the Improve pane", () => {
   it("clears both parts when the input is emptied", () => {
     const improved = reduceImprovement(started(), {
       type: "done",
-      requestId: 1,
+      token,
       improvement,
     });
 
@@ -174,15 +180,15 @@ describe("the Improve pane", () => {
   });
 
   it("shows both stored parts when an entry is reopened, without improving", () => {
+    // A restored entry answers no request, so it carries no token and applies
+    // from any phase.
     expect(
       reduceImprovement(EMPTY_IMPROVEMENT, {
         type: "restored",
-        requestId: 7,
         improvement,
       }),
     ).toEqual({
       phase: "improved",
-      requestId: 7,
       corrected: "He goes home.",
       better: "He's heading home.",
     });
@@ -190,13 +196,12 @@ describe("the Improve pane", () => {
     // A stored entry also replaces a failure on screen.
     const failed = reduceImprovement(started(), {
       type: "failed",
-      requestId: 1,
+      token,
       error: { provider: "offline" },
     });
     expect(
       reduceImprovement(failed, {
         type: "restored",
-        requestId: 7,
         improvement,
       }).phase,
     ).toBe("improved");

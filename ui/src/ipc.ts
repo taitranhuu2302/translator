@@ -8,6 +8,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
+import type { AnswerToken } from "./answerToken";
+
 // --- Model -----------------------------------------------------------------
 
 export type Language = string;
@@ -248,9 +250,10 @@ export const ipc = {
     call("translate_text", { text, mode, direction: direction ?? null }),
   /** Improve typed English and stream it back. The command returns once the
    * worker is started; the answer arrives as `translation-chunk`,
-   * `translation-done` and `translation-error`, all tagged with `requestId`. */
-  improveText: (requestId: string, text: string): Promise<void> =>
-    call("improve_text", { requestId, text }),
+   * `translation-done` and `translation-error`, all tagged with the token's
+   * wire id. */
+  improveText: (token: AnswerToken, text: string): Promise<void> =>
+    call("improve_text", { requestId: requestIdFor(token), text }),
   providerStatus: (): Promise<ProviderStatus> => call("provider_status"),
 
   /** Save one provider's API key in the Keychain. An empty key clears it. The
@@ -328,12 +331,31 @@ export const ipc = {
   completeOnboarding: (): Promise<Settings> => call("complete_onboarding"),
 };
 
+// --- Request ids -----------------------------------------------------------
+
+/**
+ * The shell knows one string request id per streamed Improve attempt; the UI
+ * knows tokens. Both directions of that conversion live here, so no sender
+ * invents an id and no listener parses one.
+ */
+export function requestIdFor(token: AnswerToken): string {
+  return `${token.session}:${token.sequence}`;
+}
+
+/** The token an id stands for, or null when the id is not one this build
+ * minted — which is the same as an answer for no attempt. */
+export function tokenForRequestId(requestId: string): AnswerToken | null {
+  const match = /^(\d+):(\d+)$/.exec(requestId);
+  if (!match) return null;
+  return { session: Number(match[1]), sequence: Number(match[2]) };
+}
+
 // --- Events ----------------------------------------------------------------
 
 /**
- * Stream shapes. Translation and Improve share one event shape so the views have
- * one code path; `part` is present only for Improve, where each chunk belongs to
- * the Corrected or the Better section.
+ * Stream shapes as the shell sends them. Translation and Improve share one
+ * event shape so the views have one code path; `part` is present only for
+ * Improve, where each chunk belongs to the Corrected or the Better section.
  */
 export interface TranslationChunk {
   request_id: string;
@@ -348,6 +370,24 @@ export interface TranslationDone {
 
 export interface TranslationError {
   request_id: string;
+  error: EngineError;
+}
+
+/** What a listener sees: the same stream, with the wire id already turned back
+ * into the token the surface stores. */
+export interface TranslationChunkEvent {
+  token: AnswerToken;
+  text: string;
+  part?: ImprovePart;
+}
+
+export interface TranslationDoneEvent {
+  token: AnswerToken;
+  outcome: TextOutcome;
+}
+
+export interface TranslationErrorEvent {
+  token: AnswerToken;
   error: EngineError;
 }
 
@@ -372,25 +412,31 @@ export function onSelectionPrefill(handler: () => void): Promise<UnlistenFn> {
 }
 
 export function onTranslationChunk(
-  handler: (payload: TranslationChunk) => void,
+  handler: (event: TranslationChunkEvent) => void,
 ): Promise<UnlistenFn> {
-  return listen<TranslationChunk>(EVENTS.translationChunk, (event) =>
-    handler(event.payload),
-  );
+  return listen<TranslationChunk>(EVENTS.translationChunk, ({ payload }) => {
+    const token = tokenForRequestId(payload.request_id);
+    if (!token) return;
+    handler({ token, text: payload.text, part: payload.part });
+  });
 }
 
 export function onTranslationDone(
-  handler: (payload: TranslationDone) => void,
+  handler: (event: TranslationDoneEvent) => void,
 ): Promise<UnlistenFn> {
-  return listen<TranslationDone>(EVENTS.translationDone, (event) =>
-    handler(event.payload),
-  );
+  return listen<TranslationDone>(EVENTS.translationDone, ({ payload }) => {
+    const token = tokenForRequestId(payload.request_id);
+    if (!token) return;
+    handler({ token, outcome: payload.outcome });
+  });
 }
 
 export function onTranslationError(
-  handler: (payload: TranslationError) => void,
+  handler: (event: TranslationErrorEvent) => void,
 ): Promise<UnlistenFn> {
-  return listen<TranslationError>(EVENTS.translationError, (event) =>
-    handler(event.payload),
-  );
+  return listen<TranslationError>(EVENTS.translationError, ({ payload }) => {
+    const token = tokenForRequestId(payload.request_id);
+    if (!token) return;
+    handler({ token, error: payload.error });
+  });
 }

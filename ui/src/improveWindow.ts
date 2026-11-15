@@ -2,38 +2,36 @@
  * The Translate Window's Improve pane as logic rather than layout.
  *
  * Improve shows two labelled parts that fill in as the model writes. The
- * reducer owns the parts and the request id: a chunk is appended only while its
- * request is the one in flight, and `done` replaces both parts with the pair the
- * provider actually validated — the streamed text was only progress. The source
- * text is not part of this state at all, so no answer or failure can clear what
- * the user typed.
+ * reducer owns the parts and the attempt's token: a chunk is appended only
+ * while its token is the one in flight, and `done` replaces both parts with the
+ * pair the provider actually validated — the streamed text was only progress.
+ * The source text is not part of this state at all, so no answer or failure can
+ * clear what the user typed.
  */
+import { isCurrent, type AnswerToken } from "./answerToken";
 import type { EngineError, ImprovePart, Improvement } from "./ipc";
 import { noticeFor, type Notice } from "./notice";
 
 export type ImproveResult =
   | { phase: "empty" }
-  | { phase: "improving"; requestId: number; corrected: string; better: string }
-  | { phase: "improved"; requestId: number; corrected: string; better: string }
-  | ({ phase: "failed"; requestId: number } & Notice);
+  | { phase: "improving"; token: AnswerToken; corrected: string; better: string }
+  | { phase: "improved"; corrected: string; better: string }
+  | ({ phase: "failed" } & Notice);
 
 export type ImproveEvent =
-  | { type: "started"; requestId: number }
-  | { type: "chunk"; requestId: number; part: ImprovePart; text: string }
-  | { type: "done"; requestId: number; improvement: Improvement }
-  | { type: "restored"; requestId: number; improvement: Improvement }
-  | { type: "failed"; requestId: number; error: EngineError }
+  | { type: "started"; token: AnswerToken }
+  | { type: "chunk"; token: AnswerToken; part: ImprovePart; text: string }
+  | { type: "done"; token: AnswerToken; improvement: Improvement }
+  | { type: "restored"; improvement: Improvement }
+  | { type: "failed"; token: AnswerToken; error: EngineError }
   | { type: "cleared" };
 
 export const EMPTY_IMPROVEMENT: ImproveResult = { phase: "empty" };
 
 type InFlight = Extract<ImproveResult, { phase: "improving" }>;
 
-function isInFlight(
-  state: ImproveResult,
-  requestId: number,
-): state is InFlight {
-  return state.phase === "improving" && state.requestId === requestId;
+function isInFlight(state: ImproveResult, token: AnswerToken): state is InFlight {
+  return state.phase === "improving" && isCurrent(token, state.token);
 }
 
 export function reduceImprovement(
@@ -45,7 +43,7 @@ export function reduceImprovement(
     case "started":
       return {
         phase: "improving",
-        requestId: event.requestId,
+        token: event.token,
         corrected: "",
         better: "",
       };
@@ -53,10 +51,10 @@ export function reduceImprovement(
     case "cleared":
       return EMPTY_IMPROVEMENT;
 
-    // Only the request in flight may append. A late chunk from an abandoned
+    // Only the attempt in flight may append. A late chunk from an abandoned
     // attempt must not leak into the pane the user is reading now.
     case "chunk": {
-      if (!isInFlight(state, event.requestId)) return state;
+      if (!isInFlight(state, event.token)) return state;
       if (event.part === "corrected") {
         return { ...state, corrected: state.corrected + event.text };
       }
@@ -67,31 +65,29 @@ export function reduceImprovement(
     // streamed text had to be corrected on the way, and even when a part never
     // streamed at all.
     case "done": {
-      if (!isInFlight(state, event.requestId)) return state;
+      if (!isInFlight(state, event.token)) return state;
       return {
         phase: "improved",
-        requestId: event.requestId,
         corrected: event.improvement.corrected,
         better: event.improvement.better,
       };
     }
 
     // A reopened history entry fills both sections from any phase: the stored
-    // pair is already the answer, so there is no "improving" step to fake.
+    // pair is already the answer, so there is no "improving" step to fake and
+    // no token to check.
     case "restored":
       return {
         phase: "improved",
-        requestId: event.requestId,
         corrected: event.improvement.corrected,
         better: event.improvement.better,
       };
 
     // A failure replaces the pane with words, and only the pane.
     case "failed": {
-      if (!isInFlight(state, event.requestId)) return state;
+      if (!isInFlight(state, event.token)) return state;
       return {
         phase: "failed",
-        requestId: event.requestId,
         ...noticeFor(event.error),
       };
     }

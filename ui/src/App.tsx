@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { beginSession, type AnswerSession } from "./answerToken";
 import { formatShortcut, providerLabel } from "./format";
 import {
   filterHistory,
@@ -92,15 +93,15 @@ export function App() {
   );
   const [copiedPart, setCopiedPart] = useState<ImprovePart | null>(null);
 
-  // Every request gets an id; an answer whose id is no longer current belongs to
-  // an abandoned translate (the input was cleared, the window reopened, or a
-  // newer request started) and must not touch the pane.
-  const requestId = useRef(0);
+  // Every attempt this window makes is issued a token from the current
+  // session. A new opening starts a new session, retiring every answer still in
+  // flight; the reducers compare each answer's token and drop anything older.
+  const tokens = useRef<AnswerSession | null>(null);
 
   const applyPrefill = useCallback((prefill: Prefill | null) => {
     if (!prefill) return;
     if ("selection" in prefill) {
-      requestId.current += 1;
+      tokens.current = beginSession();
       setText(prefill.selection.text);
       setFailure(null);
       setResult((state) => reduceResult(state, { type: "cleared" }));
@@ -133,26 +134,25 @@ export function App() {
 
   const runTranslation = useCallback(
     async (source: string, requested: Direction | null) => {
-      const id = ++requestId.current;
       setCopied(false);
       if (source.trim().length === 0) {
         setResult((state) => reduceResult(state, { type: "cleared" }));
         return;
       }
-      setResult((state) => reduceResult(state, { type: "started" }));
+      tokens.current ??= beginSession();
+      const token = tokens.current.issue();
+      setResult((state) => reduceResult(state, { type: "started", token }));
       try {
         const outcome = await ipc.translateText(source, "translate", requested);
-        if (requestId.current !== id) return;
         if ("translation" in outcome) {
           const translation = outcome.translation;
           setResult((state) =>
-            reduceResult(state, { type: "translated", translation }),
+            reduceResult(state, { type: "translated", translation, token }),
           );
         }
       } catch (error) {
-        if (requestId.current !== id) return;
         setResult((state) =>
-          reduceResult(state, { type: "failed", error: error as EngineError }),
+          reduceResult(state, { type: "failed", error: error as EngineError, token }),
         );
       }
     },
@@ -163,25 +163,25 @@ export function App() {
   // command returns once its worker starts. `done` is the only value the
   // provider strictly validated, so it replaces what the chunks showed.
   const runImprovement = useCallback(async (source: string) => {
-    const id = ++requestId.current;
     setCopiedPart(null);
     if (source.trim().length === 0) {
       setImprovement((state) => reduceImprovement(state, { type: "cleared" }));
       return;
     }
+    tokens.current ??= beginSession();
+    const token = tokens.current.issue();
     setImprovement((state) =>
-      reduceImprovement(state, { type: "started", requestId: id }),
+      reduceImprovement(state, { type: "started", token }),
     );
     try {
-      await ipc.improveText(String(id), source);
+      await ipc.improveText(token, source);
     } catch (error) {
       // The source text is App's `text` state and is never touched here: a
       // failed Improve must leave what the user typed exactly as it was.
-      if (requestId.current !== id) return;
       setImprovement((state) =>
         reduceImprovement(state, {
           type: "failed",
-          requestId: id,
+          token,
           error: error as EngineError,
         }),
       );
@@ -201,9 +201,9 @@ export function App() {
     setCopied(false);
     setCopiedPart(null);
     // Emptying the input clears both panes and abandons any answer still in
-    // flight, so neither pane can show a result for text that is gone.
+    // flight, so neither pane can show a result for text that is gone. The
+    // cleared pane holds no token, so a late answer cannot fill it.
     if (value.trim().length === 0) {
-      requestId.current += 1;
       setResult((state) => reduceResult(state, { type: "cleared" }));
       setImprovement((state) => reduceImprovement(state, { type: "cleared" }));
     }
@@ -236,7 +236,6 @@ export function App() {
   // fills that pane with the answer the engine shaped from the row. No provider
   // is called and no new row is written.
   const openHistoryEntry = async (entry: HistoryEntry) => {
-    const id = ++requestId.current;
     setMode(entry.mode);
     setSurface(entry.mode);
     setText(entry.source);
@@ -246,7 +245,6 @@ export function App() {
     setDirection(entry.mode === "translate" ? entry.direction : null);
     try {
       const outcome = await ipc.reopenHistoryEntry(entry);
-      if (requestId.current !== id) return;
       if ("translation" in outcome) {
         setResult((state) =>
           reduceResult(state, { type: "restored", translation: outcome.translation }),
@@ -255,15 +253,12 @@ export function App() {
         setImprovement((state) =>
           reduceImprovement(state, {
             type: "restored",
-            requestId: id,
             improvement: outcome.improvement,
           }),
         );
       }
     } catch {
-      if (requestId.current === id) {
-        setHistoryError("That entry could not be reopened.");
-      }
+      setHistoryError("That entry could not be reopened.");
     }
   };
 
@@ -369,44 +364,33 @@ export function App() {
     };
   }, [applyPrefill]);
 
-  // Improve streams as events rather than as the answer to its command. Every
-  // event carries the request id the view chose, and the reducer drops anything
-  // that is no longer the request in flight, so a superseded stream can never
-  // land in this pane.
+  // Improve streams as events rather than as the answer to its command. The IPC
+  // seam hands each event back with the token this window issued, and the
+  // reducer drops anything that is no longer the attempt in flight, so a
+  // superseded stream can never land in this pane.
   useEffect(() => {
     const stops = [
-      onTranslationChunk((payload) => {
+      onTranslationChunk(({ token, part, text }) => {
         // `part` is present only for Improve; a chunk without it belongs to a
         // different pane's stream.
-        if (!payload.part) return;
+        if (!part) return;
         setImprovement((state) =>
-          reduceImprovement(state, {
-            type: "chunk",
-            requestId: Number(payload.request_id),
-            part: payload.part as ImprovePart,
-            text: payload.text,
-          }),
+          reduceImprovement(state, { type: "chunk", token, part, text }),
         );
       }),
-      onTranslationDone((payload) => {
-        const outcome = payload.outcome;
+      onTranslationDone(({ token, outcome }) => {
         if (!("improvement" in outcome)) return;
-        const { improvement } = outcome;
         setImprovement((state) =>
           reduceImprovement(state, {
             type: "done",
-            requestId: Number(payload.request_id),
-            improvement,
+            token,
+            improvement: outcome.improvement,
           }),
         );
       }),
-      onTranslationError((payload) => {
+      onTranslationError(({ token, error }) => {
         setImprovement((state) =>
-          reduceImprovement(state, {
-            type: "failed",
-            requestId: Number(payload.request_id),
-            error: payload.error,
-          }),
+          reduceImprovement(state, { type: "failed", token, error }),
         );
       }),
     ];
