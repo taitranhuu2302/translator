@@ -619,6 +619,12 @@ fn replace_selection_directly(app: &AppHandle) {
     });
 }
 
+/// This native dialog is a shell surface, not one of the two UI surfaces the
+/// capture-notice model is scoped to, so it owns its own copy deliberately: it
+/// cannot draw a TypeScript model, and its sentences name what this operation
+/// did ("nothing was replaced") rather than restating the popup's notice. The
+/// catch-all arm keeps a newly added `CaptureError` variant handled here until
+/// this dialog gives it words of its own.
 fn show_replace_failure(app: &AppHandle, error: &EngineError) {
     eprintln!("Translator: Replace failed: {error}");
     let message = match error {
