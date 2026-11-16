@@ -1,3 +1,5 @@
+import { Badge } from "@/components/ui/badge";
+
 import type { Settings } from "./ipc";
 import { AZURE_ROW, GROQ_ROW } from "./providerKey";
 import { myMemoryStatusLine } from "./providerStatus";
@@ -17,14 +19,12 @@ export function ProviderSettings({
   onSettingsSaved: (settings: Settings) => void;
 }) {
   return (
-    <section className="provider-settings">
+    <div className="flex flex-col gap-2">
       <ProviderKeyRow
         config={AZURE_ROW}
         settings={settings}
         onSettingsSaved={onSettingsSaved}
       />
-
-      <hr className="provider-divider" />
 
       <ProviderKeyRow
         config={GROQ_ROW}
@@ -32,14 +32,20 @@ export function ProviderSettings({
         onSettingsSaved={onSettingsSaved}
       />
 
-      <hr className="provider-divider" />
-
-      <div className="provider-head">
-        <h2>MyMemory</h2>
-        <span className="badge ok">Always available</span>
+      <div className="flex flex-col gap-2 rounded-lg border border-border/60 bg-card/50 px-3 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="text-sm text-foreground">MyMemory</h4>
+          <Badge
+            className="border-transparent bg-primary/15 text-[0.625rem] leading-none text-primary"
+            variant="outline"
+          >
+            Always available
+          </Badge>
+        </div>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {myMemoryStatusLine()}
+        </p>
       </div>
-
-      <p className="muted small">{myMemoryStatusLine()}</p>
-    </section>
+    </div>
   );
 }

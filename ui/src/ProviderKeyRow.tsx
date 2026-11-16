@@ -1,5 +1,10 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+
 import { ipc, type Settings } from "./ipc";
 import {
   createProviderKeyRow,
@@ -59,15 +64,18 @@ export function ProviderKeyRow({
   const configured = isConfigured(config.provider, state.status);
 
   return (
-    <>
-      <div className="provider-head">
-        <h2>{config.title}</h2>
-        <span className={configured ? "badge ok" : "badge"}>
+    <div className="flex flex-col gap-2.5 rounded-lg border border-border/60 bg-card/50 px-3 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="text-sm text-foreground">{config.title}</h4>
+        <Badge
+          variant={configured ? "secondary" : "outline"}
+          className="text-[0.625rem] leading-none"
+        >
           {configured ? "Key saved" : "No key"}
-        </span>
+        </Badge>
       </div>
 
-      <p className="muted small">
+      <p className="text-xs leading-relaxed text-muted-foreground">
         {state.statusProblem
           ? state.statusProblem
           : state.status
@@ -75,9 +83,15 @@ export function ProviderKeyRow({
             : "Checking the Keychain…"}
       </p>
 
-      <label className="field">
-        <span>API key</span>
-        <input
+      <div className="flex flex-col gap-1.5">
+        <Label
+          htmlFor={`${config.provider}-key`}
+          className="text-xs font-normal text-muted-foreground"
+        >
+          API key
+        </Label>
+        <Input
+          id={`${config.provider}-key`}
           type="password"
           value={state.draft}
           onChange={(event) => current.setDraft(event.target.value)}
@@ -85,45 +99,62 @@ export function ProviderKeyRow({
           autoComplete="off"
           spellCheck={false}
         />
-      </label>
+      </div>
 
       {config.region ? (
-        <label className="field">
-          <span>Region (optional)</span>
-          <input
+        <div className="flex flex-col gap-1.5">
+          <Label
+            htmlFor={`${config.provider}-region`}
+            className="text-xs font-normal text-muted-foreground"
+          >
+            Region (optional)
+          </Label>
+          <Input
+            id={`${config.provider}-region`}
             value={state.region}
             onChange={(event) => current.setRegion(event.target.value)}
             placeholder="e.g. westeurope — leave empty for a global resource"
             autoComplete="off"
             spellCheck={false}
           />
-        </label>
+        </div>
       ) : null}
 
-      <div className="actions">
-        <button
-          className="primary"
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
           onClick={() => void current.save()}
           disabled={state.busy || state.draft.trim().length === 0}
         >
           Save key
-        </button>
+        </Button>
         {configured ? (
-          <button onClick={() => void current.clear()} disabled={state.busy}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void current.clear()}
+            disabled={state.busy}
+          >
             Clear key
-          </button>
+          </Button>
         ) : null}
         {config.region ? (
-          <button
+          <Button
+            size="sm"
+            variant="ghost"
             onClick={() => void current.saveRegion()}
-            disabled={state.busy || !config.region.changed(settings, state.region)}
+            disabled={
+              state.busy || !config.region.changed(settings, state.region)
+            }
           >
             Save region
-          </button>
+          </Button>
         ) : null}
       </div>
 
-      {state.notice ? <p className="muted small">{state.notice}</p> : null}
-    </>
+      {state.notice ? (
+        <p className="text-xs text-muted-foreground">{state.notice}</p>
+      ) : null}
+    </div>
   );
 }

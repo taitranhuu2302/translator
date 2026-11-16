@@ -1,4 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Kbd } from "@/components/ui/kbd";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 
 import { formatShortcut } from "./format";
 import {
@@ -82,7 +94,7 @@ export function SettingsPane({
     void loadConflicts();
   }, [loadConflicts]);
 
-  // The checkbox shows what macOS actually has, not what the settings file
+  // The switch shows what macOS actually has, not what the settings file
   // remembers: a login item the user removed by hand must not read as on.
   useEffect(() => {
     let cancelled = false;
@@ -117,7 +129,7 @@ export function SettingsPane({
       try {
         setLoginEnabled(await ipc.startAtLoginEnabled());
       } catch {
-        // The actual state stays unknown; the checkbox keeps its last value.
+        // The actual state stays unknown; the switch keeps its last value.
       }
     } finally {
       setBusy(false);
@@ -223,161 +235,209 @@ export function SettingsPane({
   const problemConflicts = launchConflicts.filter(
     (status) => status.problem !== null,
   );
+  const knownTarget = OFFERED_LANGUAGES.some(
+    (language) => language.code === settings.language_pair.target,
+  );
 
   return (
-    <div className="panes single">
-      <section className="pane settings-pane">
-        <div className="pane-head">
-          <h2>Settings</h2>
-          <span className="muted small">Saved on this Mac, never synced</span>
-        </div>
-
-        <section className="settings-section">
-          <h3 className="settings-title">Language Pair</h3>
-          <label className="field">
-            <span>Target</span>
-            <select
-              className="settings-select"
-              value={settings.language_pair.target}
-              onChange={(event) => {
-                void savePair(event.target.value);
-              }}
-              disabled={busy}
-            >
+    <div className="flex flex-col gap-7 px-4 py-5">
+      <Section title="Language Pair">
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="target-language">Target</Label>
+          <Select
+            value={settings.language_pair.target}
+            onValueChange={(value) => {
+              void savePair(value as string);
+            }}
+            disabled={busy}
+          >
+            <SelectTrigger id="target-language" className="w-full">
+              {/* The trigger names the language, not its code: Base UI prints
+                  the raw value unless told how to read it. */}
+              <SelectValue>
+                {(value) => languageName(String(value ?? ""))}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
               {OFFERED_LANGUAGES.map((language) => (
-                <option key={language.code} value={language.code}>
+                <SelectItem key={language.code} value={language.code}>
                   {language.name}
-                </option>
+                </SelectItem>
               ))}
               {/* A Target saved outside this view still shows instead of a blank
                   select; choosing an offered language replaces it. */}
-              {OFFERED_LANGUAGES.some(
-                (language) => language.code === settings.language_pair.target,
-              ) ? null : (
-                <option value={settings.language_pair.target}>
+              {knownTarget ? null : (
+                <SelectItem value={settings.language_pair.target}>
                   {languageName(settings.language_pair.target)}
-                </option>
+                </SelectItem>
               )}
-            </select>
-          </label>
-          <p className="muted small" aria-live="polite">
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground" aria-live="polite">
             {directionSentence(settings.language_pair)}
           </p>
-          {pairNotice ? <p className="muted small">{pairNotice}</p> : null}
-        </section>
-
-        <section className="settings-section">
-          <h3 className="settings-title">Startup</h3>
-          <label className="login-toggle">
-            <input
-              type="checkbox"
-              checked={loginEnabled ?? false}
-              disabled={busy || loginEnabled === null}
-              onChange={(event) => {
-                void saveStartAtLogin(event.target.checked);
-              }}
-            />
-            <span>Start Translator at login</span>
-          </label>
-          {loginProblem ? (
-            <p className="error small" role="alert">
-              {loginProblem}
-            </p>
+          {pairNotice ? (
+            <p className="text-xs text-muted-foreground">{pairNotice}</p>
           ) : null}
-        </section>
+        </div>
+      </Section>
 
-        <section className="settings-section">
-          <h3 className="settings-title">Shortcuts</h3>
-          {problemConflicts.length > 0 ? (
-            <div className="launch-warning" role="status">
-              <p className="small">
-                These shortcuts were not live when Translator started:
-              </p>
-              <ul className="reset-problems">
-                {problemConflicts.map((status) => (
-                  <li className="error small" key={status.action}>
-                    <strong>{actionLabel(status.action)}</strong> (
-                    {formatShortcut(status.binding)}): {status.problem}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          <p className="muted small">
-            Choose one, then press the combination you want. At least one of Ctrl,
-            Alt, Cmd or Shift is required.
+      <Section title="Startup">
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor="start-at-login" className="font-normal">
+            Start Translator at login
+          </Label>
+          <Switch
+            id="start-at-login"
+            checked={loginEnabled ?? false}
+            disabled={busy || loginEnabled === null}
+            onCheckedChange={(checked) => {
+              void saveStartAtLogin(checked);
+            }}
+          />
+        </div>
+        {loginProblem ? (
+          <p className="text-xs text-destructive" role="alert">
+            {loginProblem}
           </p>
+        ) : null}
+      </Section>
+
+      <Section title="Shortcuts">
+        {problemConflicts.length > 0 ? (
+          <div
+            role="status"
+            className="rounded-lg border border-border/70 bg-card/60 px-3 py-2.5"
+          >
+            <p className="text-xs text-foreground">
+              These shortcuts were not live when Translator started:
+            </p>
+            <ul className="mt-1.5 flex flex-col gap-1">
+              {problemConflicts.map((status) => (
+                <li className="text-xs text-destructive" key={status.action}>
+                  <strong className="font-medium">
+                    {actionLabel(status.action)}
+                  </strong>{" "}
+                  ({formatShortcut(status.binding)}): {status.problem}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Choose one, then press the combination you want. At least one of Ctrl,
+          Alt, Cmd or Shift is required.
+        </p>
+
+        <div className="flex flex-col gap-2">
           {ACTIONS.map(({ action, label, description }) => (
-            <div className="binding-row" key={action}>
-              <div className="binding-text">
-                <strong>{label}</strong>
-                <span className="muted small">{description}</span>
+            <div
+              key={action}
+              className="flex flex-col gap-1.5 rounded-lg border border-border/60 bg-card/50 px-3 py-2.5"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-foreground">{label}</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {description}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {recording === action ? (
+                    <span className="text-xs text-primary">
+                      Press the combination…
+                    </span>
+                  ) : (
+                    <Kbd>{formatShortcut(settings.shortcuts[action])}</Kbd>
+                  )}
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      setRecording(recording === action ? null : action)
+                    }
+                    disabled={
+                      busy || (recording !== null && recording !== action)
+                    }
+                  >
+                    {recording === action ? "Listening…" : "Change"}
+                  </Button>
+                </div>
               </div>
-              {recording === action ? (
-                <span className="binding-capture">Press the combination…</span>
-              ) : (
-                <kbd>{formatShortcut(settings.shortcuts[action])}</kbd>
-              )}
-              <button
-                onClick={() =>
-                  setRecording(recording === action ? null : action)
-                }
-                disabled={busy || (recording !== null && recording !== action)}
-              >
-                {recording === action ? "Listening…" : "Change"}
-              </button>
               {problems[action] ? (
-                <p className="error small binding-problem" role="alert">
+                <p className="text-xs text-destructive" role="alert">
                   {problems[action]}
                 </p>
               ) : null}
             </div>
           ))}
-        </section>
+        </div>
+      </Section>
 
-        <section className="settings-section">
-          <h3 className="settings-title">Providers</h3>
-          <ProviderSettings
-            settings={settings}
-            onSettingsSaved={onSettingsSaved}
-          />
-        </section>
+      <Section title="Providers">
+        <ProviderSettings
+          settings={settings}
+          onSettingsSaved={onSettingsSaved}
+        />
+      </Section>
 
-        <section className="settings-section">
-          <h3 className="settings-title">Reset</h3>
-          <p className="muted small">
-            Puts back the shipped shortcuts and English ⇄ Vietnamese. History and
-            API keys are kept.
-          </p>
-          {confirmReset ? (
-            <div className="actions">
-              <button className="danger" onClick={reset} disabled={busy}>
-                Reset shortcuts and language pair
-              </button>
-              <button onClick={() => setConfirmReset(false)} disabled={busy}>
-                Keep my settings
-              </button>
-            </div>
-          ) : (
-            <div className="actions">
-              <button onClick={() => setConfirmReset(true)} disabled={busy}>
-                Reset shortcuts and language pair…
-              </button>
-            </div>
-          )}
-          {resetNotice ? <p className="muted small">{resetNotice}</p> : null}
-          {resetProblems.length > 0 ? (
-            <ul className="reset-problems">
-              {resetProblems.map((problem) => (
-                <li className="error small" key={problem}>
-                  {problem}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </section>
-      </section>
+      <Section title="Reset">
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Puts back the shipped shortcuts and English ⇄ Vietnamese. History and
+          API keys are kept.
+        </p>
+        {confirmReset ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="destructive" onClick={reset} disabled={busy}>
+              Reset shortcuts and language pair
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => setConfirmReset(false)}
+              disabled={busy}
+            >
+              Keep my settings
+            </Button>
+          </div>
+        ) : (
+          <div>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmReset(true)}
+              disabled={busy}
+            >
+              Reset shortcuts and language pair…
+            </Button>
+          </div>
+        )}
+        {resetNotice ? (
+          <p className="text-xs text-muted-foreground">{resetNotice}</p>
+        ) : null}
+        {resetProblems.length > 0 ? (
+          <ul className="flex flex-col gap-1">
+            {resetProblems.map((problem) => (
+              <li className="text-xs text-destructive" key={problem}>
+                {problem}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </Section>
     </div>
+  );
+}
+
+/** One titled block of the sheet. The heading is a label, not a landmark: the
+ * sheet already has one title. */
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-3">
+      <h3 className="text-[0.6875rem] font-medium tracking-[0.09em] text-muted-foreground uppercase">
+        {title}
+      </h3>
+      {children}
+    </section>
   );
 }
 

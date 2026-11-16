@@ -118,6 +118,23 @@ pub fn screen_under_cursor() -> Option<ScreenUnderCursor> {
     }
 }
 
+/// The shortest the popup may be: below this the card cannot show its header
+/// and a line of text.
+pub const MIN_POPUP_HEIGHT: f64 = 120.0;
+/// The tallest the popup may be: above this it would cover the text it was
+/// opened over, so the answer scrolls inside it instead.
+pub const MAX_POPUP_HEIGHT: f64 = 320.0;
+
+/// The popup is sized to its content, but never outside the two bounds above.
+/// A height the page could not measure is treated as the minimum rather than
+/// used as-is: a `NaN` frame is not a size.
+pub fn clamp_popup_height(content: f64) -> f64 {
+    if !content.is_finite() {
+        return MIN_POPUP_HEIGHT;
+    }
+    content.clamp(MIN_POPUP_HEIGHT, MAX_POPUP_HEIGHT)
+}
+
 /// The popup's top-left corner in points, measured from the top-left of the
 /// desktop. It opens below and to the right of the cursor; near the bottom edge
 /// it flips above the cursor, and it is always clamped inside `visible`.
@@ -294,6 +311,30 @@ mod tests {
                 y: 632.0
             }
         );
+    }
+
+    #[test]
+    fn a_short_popup_keeps_the_minimum_height() {
+        assert_eq!(clamp_popup_height(64.0), MIN_POPUP_HEIGHT);
+        assert_eq!(clamp_popup_height(MIN_POPUP_HEIGHT), MIN_POPUP_HEIGHT);
+    }
+
+    #[test]
+    fn a_popup_inside_the_range_keeps_its_content_height() {
+        assert_eq!(clamp_popup_height(200.0), 200.0);
+        assert_eq!(clamp_popup_height(300.5), 300.5);
+    }
+
+    #[test]
+    fn a_tall_popup_stops_at_the_maximum_height() {
+        assert_eq!(clamp_popup_height(900.0), MAX_POPUP_HEIGHT);
+        assert_eq!(clamp_popup_height(MAX_POPUP_HEIGHT), MAX_POPUP_HEIGHT);
+    }
+
+    #[test]
+    fn a_height_that_was_not_a_number_falls_back_to_the_minimum() {
+        assert_eq!(clamp_popup_height(f64::NAN), MIN_POPUP_HEIGHT);
+        assert_eq!(clamp_popup_height(f64::INFINITY), MIN_POPUP_HEIGHT);
     }
 
     #[test]

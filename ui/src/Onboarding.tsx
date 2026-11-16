@@ -1,4 +1,16 @@
+import { CheckCircle2 } from "lucide-react";
 import { useEffect, useState } from "react";
+
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Kbd } from "@/components/ui/kbd";
 
 import { formatShortcut } from "./format";
 import { ipc, type ShortcutBindings } from "./ipc";
@@ -26,6 +38,12 @@ const SHORTCUTS: { key: keyof ShortcutBindings; name: string; action: string }[]
   },
 ];
 
+/**
+ * The one-time welcome. It is a `Dialog`, so the keyboard stays inside it until
+ * it is answered and returns to the window afterwards; Escape or the backdrop
+ * puts it away for this session without marking it seen, and "Got it" is what
+ * writes the flag.
+ */
 export function Onboarding({
   shortcuts,
   granted: grantedByApp,
@@ -35,6 +53,7 @@ export function Onboarding({
   granted: boolean;
   onDone: () => Promise<void>;
 }) {
+  const [open, setOpen] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [granted, setGranted] = useState(grantedByApp);
@@ -79,67 +98,87 @@ export function Onboarding({
   };
 
   return (
-    <div className="onboarding-backdrop">
-      <section
-        className="onboarding"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="onboarding-title"
-      >
-        <h2 id="onboarding-title">Welcome to Translator</h2>
-        <p className="muted">
-          Translator lives in the menu bar and works on whatever you select in
-          another app. Select text anywhere, then use one of these.
-        </p>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent className="sm:max-w-md" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>Welcome to Translator</DialogTitle>
+          <DialogDescription>
+            Translator lives in the menu bar and works on whatever you select in
+            another app. Select text anywhere, then use one of these.
+          </DialogDescription>
+        </DialogHeader>
 
-        <ul className="shortcut-list">
+        <ul className="flex flex-col gap-2.5">
           {SHORTCUTS.map((shortcut) => (
-            <li className="shortcut-row" key={shortcut.key}>
-              <kbd>{formatShortcut(shortcuts[shortcut.key])}</kbd>
-              <div>
-                <strong>{shortcut.name}</strong>
-                <span className="muted">{shortcut.action}</span>
+            <li className="flex items-start gap-3" key={shortcut.key}>
+              <Kbd className="mt-0.5 shrink-0">
+                {formatShortcut(shortcuts[shortcut.key])}
+              </Kbd>
+              <div className="min-w-0">
+                <p className="text-sm text-foreground">{shortcut.name}</p>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {shortcut.action}
+                </p>
               </div>
             </li>
           ))}
         </ul>
 
-        <p className="muted small">
-          Reading your selection needs the Accessibility permission. macOS asks
-          the first time a shortcut fires; you can also grant it now from
-          System Settings → Privacy &amp; Security → Accessibility.
-        </p>
-
-        {granted ? (
-          <p className="small" role="status">
-            Accessibility is granted.
+        <div className="flex flex-col gap-2.5 rounded-lg border border-border/60 bg-card/50 px-3 py-2.5">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Reading your selection needs the Accessibility permission. macOS
+            asks the first time a shortcut fires; you can also grant it now from
+            System Settings → Privacy &amp; Security → Accessibility.
           </p>
-        ) : (
-          <div className="actions">
-            <button
-              onClick={() => {
-                void grantAccessibility();
-              }}
+          {granted ? (
+            <p
+              className="flex items-center gap-1.5 text-xs text-primary"
+              role="status"
             >
-              Grant Accessibility…
-            </button>
-            <button
-              onClick={() => {
-                void openPrivacySettings();
-              }}
-            >
-              Open Privacy Settings
-            </button>
-          </div>
-        )}
-        {grantProblem ? <p className="error small">{grantProblem}</p> : null}
+              <CheckCircle2 aria-hidden="true" className="size-3.5" />
+              Accessibility is granted.
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  void grantAccessibility();
+                }}
+              >
+                Grant Accessibility…
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  void openPrivacySettings();
+                }}
+              >
+                Open Privacy Settings
+              </Button>
+            </div>
+          )}
+          {grantProblem ? (
+            <p className="text-xs text-destructive" role="alert">
+              {grantProblem}
+            </p>
+          ) : null}
+        </div>
 
-        {error ? <p className="error">{error}</p> : null}
+        {error ? (
+          <p className="text-xs text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
 
-        <button className="primary" onClick={finish} disabled={saving}>
-          {saving ? "Saving…" : "Got it"}
-        </button>
-      </section>
-    </div>
+        <DialogFooter>
+          <Button onClick={finish} disabled={saving}>
+            {saving ? "Saving…" : "Got it"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { AppShell } from "@/components/AppShell";
+import { HistorySheet } from "@/components/HistorySheet";
+import { SettingsSheet } from "@/components/SettingsSheet";
+import { TranslatePanes } from "@/components/TranslatePanes";
+
 import { beginSession, type AnswerSession } from "./answerToken";
-import { formatShortcut, providerLabel } from "./format";
-import {
-  filterHistory,
-  historyModeLabel,
-  relativeTime,
-} from "./historyView";
+import { formatShortcut } from "./format";
 import {
   EMPTY_IMPROVEMENT,
-  partLabel,
   reduceImprovement,
   type ImproveResult,
 } from "./improveWindow";
@@ -27,12 +26,10 @@ import {
   type Prefill,
   type Settings,
 } from "./ipc";
-import { noticeFor, type Notice } from "./notice";
+import { noticeFor, noticeForSettingsFailure, type Notice } from "./notice";
 import { performNoticeAction } from "./noticeActions";
 import { CaptureNoticeView, NoticeView } from "./NoticeView";
 import { Onboarding } from "./Onboarding";
-import { SettingsPane } from "./SettingsPane";
-import { SETTINGS_READ_FAILED } from "./settingsWrite";
 import {
   EMPTY_RESULT,
   reduceResult,
@@ -42,26 +39,17 @@ import {
 
 const FALLBACK_SHORTCUT = "Ctrl+Alt+E";
 
-const IMPROVE_PARTS: ImprovePart[] = ["corrected", "better"];
-
-/** The window's four surfaces. Translate and Improve share the two panes and
- * only change their labels; History replaces them with the stored entries, and
- * Settings with the local preferences. */
-type Surface = Mode | "history" | "settings";
-
-const SURFACES: { id: Surface; label: string }[] = [
-  { id: "translate", label: "Translate" },
-  { id: "improve", label: "Improve" },
-  { id: "history", label: "History" },
-  { id: "settings", label: "Settings" },
-];
-
-/** How many recent entries the History surface loads. It is a cap, not a page
+/** How many recent entries the History sheet loads. It is a cap, not a page
  * size: v1 shows recent history, and the search narrows what was loaded. */
 const HISTORY_LIMIT = 500;
 
-const EMPTY_HISTORY = "Nothing here yet — translations and improvements you make will appear here.";
-
+/**
+ * The window: two panes that stay put, and two sheets that slide over them.
+ *
+ * History and Settings are no longer places the window goes — they are panels
+ * beside the work, so a trip to either leaves both panes exactly as they were.
+ * The state machine below is unchanged; only where it is drawn moved.
+ */
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -72,9 +60,11 @@ export function App() {
   const [text, setText] = useState("");
   const [failure, setFailure] = useState<Notice | null>(null);
   const [mode, setMode] = useState<Mode>("translate");
-  const [surface, setSurface] = useState<Surface>("translate");
 
-  // History is read once when the window opens and again whenever its surface is
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // History is read once when the window opens and again whenever its sheet is
   // opened. The query filters these entries locally, so typing never asks the
   // engine for anything.
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -108,9 +98,10 @@ export function App() {
       setResult((state) => reduceResult(state, { type: "cleared" }));
       setImprovement((state) => reduceImprovement(state, { type: "cleared" }));
       // A new opening starts in Translate, from the saved pair again; Swap never
-      // survives it.
-      setSurface("translate");
+      // survives it, and neither sheet is left covering the new text.
       setMode("translate");
+      setHistoryOpen(false);
+      setSettingsOpen(false);
       setDirection(null);
       setCopied(false);
       setCopiedPart(null);
@@ -119,7 +110,7 @@ export function App() {
     setFailure(noticeFor(prefill.failure));
   }, []);
 
-  // The newest entries, unfiltered: the History surface narrows them in memory.
+  // The newest entries, unfiltered: the History sheet narrows them in memory.
   // A read that fails leaves the last list alone and says so.
   const loadHistory = useCallback(() => {
     ipc
@@ -155,7 +146,11 @@ export function App() {
         }
       } catch (error) {
         setResult((state) =>
-          reduceResult(state, { type: "failed", error: error as EngineError, token }),
+          reduceResult(state, {
+            type: "failed",
+            error: error as EngineError,
+            token,
+          }),
         );
       }
     },
@@ -216,33 +211,26 @@ export function App() {
 
   // Switching between the two working modes keeps an in-flight stream alive in
   // its own pane: the two results are separate states, so a hidden answer can
-  // never land in the pane of the other mode. Opening History re-reads it first.
-  // Settings leaves the working surface exactly as it was, so a trip to Settings
-  // and back changes neither pane.
-  const selectSurface = (next: Surface) => {
-    if (next === "history") {
-      setSurface("history");
-      loadHistory();
-      return;
-    }
-    if (next === "settings") {
-      setSurface("settings");
-      return;
-    }
-    if (next === mode && surface === next) return;
+  // never land in the pane of the other mode.
+  const changeMode = (next: Mode) => {
+    if (next === mode) return;
     setMode(next);
-    setSurface(next);
     setCopied(false);
     setCopiedPart(null);
   };
 
-  // A stored entry is every part of a result: clicking it puts its source back
+  const openHistory = () => {
+    setHistoryOpen(true);
+    loadHistory();
+  };
+
+  // A stored entry is every part of a result: choosing it puts its source back
   // in the input, opens the mode it was made in, restores a known direction, and
   // fills that pane with the answer the engine shaped from the row. No provider
   // is called and no new row is written.
   const openHistoryEntry = async (entry: HistoryEntry) => {
+    setHistoryOpen(false);
     setMode(entry.mode);
-    setSurface(entry.mode);
     setText(entry.source);
     setFailure(null);
     setCopied(false);
@@ -252,7 +240,10 @@ export function App() {
       const outcome = await ipc.reopenHistoryEntry(entry);
       if ("translation" in outcome) {
         setResult((state) =>
-          reduceResult(state, { type: "restored", translation: outcome.translation }),
+          reduceResult(state, {
+            type: "restored",
+            translation: outcome.translation,
+          }),
         );
       } else {
         setImprovement((state) =>
@@ -363,9 +354,11 @@ export function App() {
     claim();
     return () => {
       cancelled = true;
-      void unlisten.then((stop) => stop()).catch(() => {
-        // The listener never attached, so there is nothing to stop.
-      });
+      void unlisten
+        .then((stop) => stop())
+        .catch(() => {
+          // The listener never attached, so there is nothing to stop.
+        });
     };
   }, [applyPrefill]);
 
@@ -402,15 +395,17 @@ export function App() {
 
     return () => {
       for (const stop of stops) {
-        void stop.then((unlisten) => unlisten()).catch(() => {
-          // The listener never attached, so there is nothing to stop.
-        });
+        void stop
+          .then((unlisten) => unlisten())
+          .catch(() => {
+            // The listener never attached, so there is nothing to stop.
+          });
       }
     };
   }, []);
 
   // History survives restarts in SQLite, so the list is read at launch too, not
-  // only when its tab is opened.
+  // only when its sheet is opened.
   useEffect(() => {
     loadHistory();
   }, [loadHistory]);
@@ -418,211 +413,75 @@ export function App() {
   const translateShortcut = formatShortcut(
     settings?.shortcuts.translate_window ?? FALLBACK_SHORTCUT,
   );
+  const replaceShortcut = formatShortcut(
+    settings?.shortcuts.replace ?? "Ctrl+Alt+R",
+  );
 
   const finishOnboarding = async () => {
     setSettings(await ipc.completeOnboarding());
   };
 
   const canSwap = settings !== null && result.phase === "translated";
-  const canCopy = result.phase === "translated";
-
-  const isImprove = mode === "improve";
-  const actionLabel = isImprove ? "Improve" : "Translate";
-  // The two parts only exist once a request has started; before that, and after
-  // a failure, the pane shows words instead.
-  const improveParts =
-    improvement.phase === "improving" || improvement.phase === "improved"
-      ? improvement
-      : null;
 
   return (
-    <main className="app">
-      <header className="topbar">
-        <div>
-          <h1>Translator</h1>
-          <p className="muted">
-            Acts on the selection in whatever app has focus.
-          </p>
-        </div>
-        <p className="hint">
-          <kbd>{translateShortcut}</kbd> opens this window with your selection
-        </p>
-      </header>
-
-      {settingsError ? (
-        <p className="notice error">
-          {SETTINGS_READ_FAILED} {settingsError}
-        </p>
-      ) : null}
-
+    <AppShell
+      mode={mode}
+      onModeChange={changeMode}
+      onOpenHistory={openHistory}
+      onOpenSettings={() => setSettingsOpen(true)}
+      translateShortcut={translateShortcut}
+      replaceShortcut={replaceShortcut}
+    >
       {failure ? (
-        <CaptureNoticeView
-          notice={failure}
-          granted={granted}
-          shortcut={translateShortcut}
-          onAction={performNoticeAction}
-        />
+        <div className="shrink-0 px-4 pt-4">
+          <CaptureNoticeView
+            notice={failure}
+            granted={granted}
+            shortcut={translateShortcut}
+            onAction={performNoticeAction}
+          />
+        </div>
+      ) : settingsError ? (
+        <div className="shrink-0 px-4 pt-4">
+          <NoticeView notice={noticeForSettingsFailure(settingsError)} />
+        </div>
       ) : null}
 
-      <div className="mode-switch" role="tablist" aria-label="View">
-        {SURFACES.map(({ id, label }) => (
-          <button
-            key={id}
-            role="tab"
-            aria-selected={surface === id}
-            className={surface === id ? "tab active" : "tab"}
-            onClick={() => selectSurface(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <TranslatePanes
+        mode={mode}
+        text={text}
+        onTextChange={changeText}
+        onSubmit={translate}
+        result={result}
+        improvement={improvement}
+        copied={copied}
+        copiedPart={copiedPart}
+        onCopy={copy}
+        onCopyPart={copyImprovement}
+        onSwap={swap}
+        canSwap={canSwap}
+        shortcut={translateShortcut}
+      />
 
-      {surface === "history" ? (
-        <HistoryPane
-          entries={history}
-          query={historyQuery}
-          error={historyError}
-          onQueryChange={setHistoryQuery}
-          onOpen={(entry) => {
-            void openHistoryEntry(entry);
-          }}
-        />
-      ) : surface === "settings" ? (
-        settings ? (
-          <SettingsPane settings={settings} onSettingsSaved={setSettings} />
-        ) : (
-          <div className="panes single">
-            <section className="pane">
-              <p className="empty">
-                {settingsError ? SETTINGS_READ_FAILED : "Loading settings…"}
-              </p>
-            </section>
-          </div>
-        )
-      ) : (
-      <div className="panes">
-        <section className="pane">
-          <h2>Source</h2>
-          <textarea
-            aria-label={isImprove ? "English text to improve" : "Text to translate"}
-            className="source-input"
-            value={text}
-            onChange={(event) => changeText(event.target.value)}
-            onKeyDown={(event) => {
-              // Enter acts; Shift+Enter is the newline the editor needs.
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                translate();
-              }
-            }}
-            placeholder={
-              isImprove
-                ? "Type an English sentence to correct and improve."
-                : `Select text in any app and press ${translateShortcut}, or type here.`
-            }
-            spellCheck={false}
-            autoFocus
-          />
-          <div className="pane-actions">
-            <button className="primary" onClick={translate}>
-              {actionLabel}
-            </button>
-            <span className="muted small">
-              {text.trim().length === 0
-                ? isImprove
-                  ? "Nothing to improve — the window opens empty."
-                  : "Nothing selected — the window opens empty."
-                : `${text.length} characters · Enter ${isImprove ? "improves" : "translates"}, Shift+Enter adds a line`}
-            </span>
-          </div>
-        </section>
+      <HistorySheet
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        entries={history}
+        query={historyQuery}
+        error={historyError}
+        onQueryChange={setHistoryQuery}
+        onOpen={(entry) => {
+          void openHistoryEntry(entry);
+        }}
+      />
 
-        <section className="pane">
-          <div className="pane-head">
-            <h2>{isImprove ? "Improved" : "Translation"}</h2>
-            {!isImprove && result.phase === "translated" ? (
-              <span className="provider">
-                via {providerLabel(result.translation.provider)}
-              </span>
-            ) : null}
-          </div>
-
-          {isImprove ? (
-            <>
-              {improvement.phase === "empty" ? (
-                <p className="empty">
-                  Press Enter to correct the sentence and make it more natural.
-                </p>
-              ) : null}
-
-              {improveParts ? (
-                <div className="improve-parts">
-                  {IMPROVE_PARTS.map((part) => {
-                    const value = improveParts[part];
-                    return (
-                      <section className="improve-part" key={part}>
-                        <div className="improve-part-head">
-                          <h3>{partLabel(part)}</h3>
-                          <button
-                            onClick={() => copyImprovement(part)}
-                            disabled={value.length === 0}
-                          >
-                            {copiedPart === part ? "Copied" : "Copy"}
-                          </button>
-                        </div>
-                        <p className="result-text" aria-label={partLabel(part)}>
-                          {value}
-                        </p>
-                      </section>
-                    );
-                  })}
-                </div>
-              ) : null}
-
-              {improvement.phase === "failed" ? (
-                <NoticeView className="result-failure" notice={improvement} />
-              ) : null}
-            </>
-          ) : (
-            <>
-              {result.phase === "empty" ? (
-                <p className="empty">
-                  Press Enter to translate. The result can be selected in part.
-                </p>
-              ) : null}
-
-              {result.phase === "translating" ? (
-                <p className="empty" role="status">
-                  Translating…
-                </p>
-              ) : null}
-
-              {result.phase === "translated" ? (
-                <p className="result-text" aria-label="Translation">
-                  {result.translation.text}
-                </p>
-              ) : null}
-
-              {result.phase === "failed" ? (
-                <NoticeView className="result-failure" notice={result} />
-              ) : null}
-            </>
-          )}
-
-          {isImprove ? null : (
-            <div className="pane-actions">
-              <button onClick={swap} disabled={!canSwap}>
-                Swap
-              </button>
-              <button onClick={copy} disabled={!canCopy}>
-                {copied ? "Copied" : "Copy"}
-              </button>
-            </div>
-          )}
-        </section>
-      </div>
-      )}
+      <SettingsSheet
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        settings={settings}
+        error={settingsError}
+        onSettingsSaved={setSettings}
+      />
 
       {settings && !settings.onboarding_seen ? (
         <Onboarding
@@ -631,76 +490,6 @@ export function App() {
           onDone={finishOnboarding}
         />
       ) : null}
-    </main>
-  );
-}
-
-function HistoryPane({
-  entries,
-  query,
-  error,
-  onQueryChange,
-  onOpen,
-}: {
-  entries: HistoryEntry[];
-  query: string;
-  error: string | null;
-  onQueryChange: (value: string) => void;
-  onOpen: (entry: HistoryEntry) => void;
-}) {
-  // Filtering is local and instant: the entries were read once, and typing must
-  // never ask the engine (or a provider) anything.
-  const visible = filterHistory(entries, query);
-  const now = Math.floor(Date.now() / 1000);
-
-  return (
-    <div className="panes single">
-      <section className="pane history-pane">
-        <div className="pane-head">
-          <h2>History</h2>
-          <span className="muted small">Kept on this Mac for 30 days</span>
-        </div>
-
-        <input
-          type="search"
-          className="history-search"
-          aria-label="Search history"
-          placeholder="Search either side…"
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-          spellCheck={false}
-          autoFocus
-        />
-
-        {error ? <p className="notice error">{error}</p> : null}
-
-        {visible.length === 0 ? (
-          <p className="empty">{EMPTY_HISTORY}</p>
-        ) : (
-          <ul className="history-list">
-            {visible.map((entry, index) => (
-              <li key={`${entry.created_at}-${index}`}>
-                <button
-                  type="button"
-                  className="history-entry"
-                  onClick={() => onOpen(entry)}
-                >
-                  <span className="history-meta">
-                    <span className="history-mode">
-                      {historyModeLabel(entry.mode)}
-                    </span>
-                    <span className="muted small">
-                      {relativeTime(entry.created_at, now)}
-                    </span>
-                  </span>
-                  <span className="history-source">{entry.source}</span>
-                  <span className="history-result">{entry.result}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-    </div>
+    </AppShell>
   );
 }
