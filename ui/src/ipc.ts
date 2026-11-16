@@ -319,6 +319,11 @@ export const ipc = {
   /** Dismiss the popup from inside it (Escape, or losing focus). */
   hidePopup: (): Promise<void> => call("hide_popup"),
 
+  /** The popup's card measured its own content. The shell clamps the height to
+   * the panel's bounds and re-places the card; this side never decides either. */
+  setPopupHeight: (height: number): Promise<void> =>
+    call("set_popup_height", { height }),
+
   /** The popup's Copy button: plain text to the system clipboard. */
   copyText: (text: string): Promise<void> => call("copy_text", { text }),
 

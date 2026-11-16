@@ -15,9 +15,14 @@
       {
         "label": "main",
         "title": "Translator",
-        "width": 720,
-        "height": 480,
-        "visible": false
+        "width": 960,
+        "height": 640,
+        "minWidth": 680,
+        "minHeight": 460,
+        "visible": false,
+        "theme": "Dark",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       },
       {
         "label": "popup",
@@ -25,6 +30,7 @@
         "url": "popup.html",
         "width": 420,
         "height": 220,
+        "transparent": true,
         "visible": false,
         "focus": false,
         "decorations": false,

@@ -360,6 +360,19 @@ async fn hide_popup(app: AppHandle) -> Result<(), ()> {
     main_thread::on_main_thread(&app, panel::hide).map_or(Err(()), |()| Ok(()))
 }
 
+/// The popup's page measured its own content. The height it asks for is
+/// clamped and applied on the main thread, and the panel is placed again so the
+/// card stays where it opened. A failure is not worth a notice of its own: the
+/// card simply keeps the height it had.
+#[tauri::command]
+async fn set_popup_height(app: AppHandle, height: f64) -> Result<(), ()> {
+    let scheduled = main_thread::on_main_thread(&app, move |handle| {
+        panel::set_height(handle, height)
+    })
+    .ok_or(())?;
+    scheduled.map_err(|_| ())
+}
+
 /// The popup's Copy button. Writing through AppKit does not depend on the web
 /// view's clipboard permission.
 #[tauri::command]
@@ -901,6 +914,7 @@ fn main() {
             take_selection_prefill,
             take_popup_prefill,
             hide_popup,
+            set_popup_height,
             copy_text,
             accessibility_granted,
             request_accessibility,

@@ -9,6 +9,7 @@
  */
 import { providerLabel } from "./format";
 import type { CaptureError, EngineError, ProviderError } from "./ipc";
+import { SETTINGS_READ_FAILED } from "./settingsWrite";
 
 /** The styling kind. It is derived from the model, never chosen by a surface.
  * `ok` marks a cause that has been resolved, such as a grant that landed while
@@ -75,6 +76,19 @@ export function accessibilityGrantedNotice(shortcut: string): Notice {
     kind: "ok",
     title: "Accessibility is on.",
     detail: `Select text in any app and press ${shortcut} again.`,
+  };
+}
+
+/**
+ * The settings could not be read when the window opened. It is not a delivery
+ * failure, so it is not one of `noticeFor`'s cases; the window still translates,
+ * but no control showing a saved value can be trusted until it is reopened.
+ */
+export function noticeForSettingsFailure(reason: string | null): Notice {
+  return {
+    kind: "error",
+    title: SETTINGS_READ_FAILED,
+    detail: reason ?? "Quit and reopen Translator.",
   };
 }
 
