@@ -20,8 +20,15 @@ import { SettingsSheet } from "@/components/SettingsSheet";
 import { TranslatePanes } from "@/components/TranslatePanes";
 
 import type { AnswerToken } from "../answerToken";
+import { ReplaceHudCard } from "../HudView";
 import { EMPTY_IMPROVEMENT, type ImproveResult } from "../improveWindow";
-import type { HistoryEntry, ImprovePart, Mode, Translation } from "../ipc";
+import type {
+  HistoryEntry,
+  ImprovePart,
+  Mode,
+  ReplacePhase,
+  Translation,
+} from "../ipc";
 import { MOCK_SETTINGS } from "./mockIpc";
 import { CaptureNoticeView, NoticeView } from "../NoticeView";
 import { Onboarding } from "../Onboarding";
@@ -173,6 +180,7 @@ const SCENES: Scene[] = [
     },
   },
   { id: "notices", mode: "translate", state: "failure", label: "Notices · all kinds" },
+  { id: "hud", mode: "translate", state: "empty", label: "Replace · progress HUD" },
   { id: "onboarding", mode: "translate", state: "done", label: "Onboarding · welcome", overlay: { kind: "onboarding" } },
 ];
 
@@ -274,6 +282,8 @@ export function PreviewApp() {
         >
           {scene.id === "notices" ? (
             <NoticesScene />
+          ) : scene.id === "hud" ? (
+            <HudScene />
           ) : (
             <TranslatePanes
               mode={scene.mode}
@@ -356,6 +366,29 @@ function PreviewBar({
         </SelectContent>
       </Select>
       <span className="ml-auto">Dev only — never shipped</span>
+    </div>
+  );
+}
+
+/**
+ * The Replace HUD at each of its steps, in the 260 × 52 window the shell gives
+ * it. The dashed frame stands in for the transparent window; the capsule is the
+ * component the page itself draws.
+ */
+function HudScene() {
+  const phases: ReplacePhase[] = ["capturing", "translating", "replacing"];
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto p-6">
+      <div className="flex flex-col gap-5">
+        {phases.map((phase) => (
+          <div key={phase} className="flex flex-col gap-2">
+            <span className="text-xs text-muted-foreground">{phase}</span>
+            <div className="flex h-[52px] w-[260px] items-center rounded-lg p-2.5 outline outline-dashed outline-border">
+              <ReplaceHudCard phase={phase} />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

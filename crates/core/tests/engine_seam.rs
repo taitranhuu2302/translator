@@ -12,8 +12,9 @@ use translator_core::{
     AuthFailure, AzureProvider, CachedProvider, CaptureError, Direction, EngineError, GroqProvider,
     HistoryEntry, HistoryStore, HttpError, ImproveDelta, ImprovePart, ImproveRequest, Improvement,
     Language, LanguagePair, Mode, MyMemoryProvider, PopupPrefill, ProviderError, ProviderId,
-    ProviderLadder, ProviderTranslation, Selection, Settings, SettingsStore, SpeechError,
-    TextOutcome, Timestamp, TranslateRequest, Translation, TranslationProvider, TranslatorEngine,
+    ProviderLadder, ProviderTranslation, ReplacePhase, Selection, Settings, SettingsStore,
+    SpeechError, TextOutcome, Timestamp, TranslateRequest, Translation, TranslationProvider,
+    TranslatorEngine,
 };
 
 struct Harness {
@@ -213,12 +214,76 @@ fn replace_selection_writes_the_translation_over_the_selection() {
 
     let outcome = harness
         .engine()
-        .replace_selection()
+        .replace_selection(|_| {})
         .expect("replace selection");
 
     assert_eq!(outcome.translation.text, "Hello");
     assert_eq!(harness.capture.writes(), vec!["Hello".to_owned()]);
     assert_eq!(harness.history.entries().len(), 1);
+}
+
+#[test]
+fn a_replace_reports_every_step_in_order() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    );
+
+    let mut phases = Vec::new();
+    harness
+        .engine()
+        .replace_selection(|phase| phases.push(phase))
+        .expect("replace selection");
+
+    assert_eq!(
+        phases,
+        vec![
+            ReplacePhase::Capturing,
+            ReplacePhase::Translating,
+            ReplacePhase::Replacing,
+        ]
+    );
+}
+
+#[test]
+fn a_replace_refused_before_translating_reports_only_capturing() {
+    for harness in [
+        Harness::new(FakeCapture::default(), provider_saying("Hello")),
+        Harness::new(FakeCapture::with_selection("   "), provider_saying("Hello")),
+    ] {
+        let mut phases = Vec::new();
+        let error = harness
+            .engine()
+            .replace_selection(|phase| phases.push(phase))
+            .unwrap_err();
+
+        assert_eq!(error, EngineError::Capture(CaptureError::NothingSelected));
+        assert_eq!(phases, vec![ReplacePhase::Capturing]);
+        assert!(harness.provider.requests().is_empty());
+        assert!(harness.capture.writes().is_empty());
+    }
+}
+
+#[test]
+fn a_replace_whose_translation_fails_never_reports_replacing() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        FakeProvider::default().failing_with(ProviderError::Offline),
+    );
+
+    let mut phases = Vec::new();
+    let error = harness
+        .engine()
+        .replace_selection(|phase| phases.push(phase))
+        .unwrap_err();
+
+    assert_eq!(error, EngineError::Provider(ProviderError::Offline));
+    assert_eq!(
+        phases,
+        vec![ReplacePhase::Capturing, ReplacePhase::Translating]
+    );
+    assert!(harness.capture.writes().is_empty());
+    assert!(harness.history.entries().is_empty());
 }
 
 #[test]
@@ -344,7 +409,7 @@ fn a_rejected_history_write_never_fails_a_replace() {
         Arc::new(harness.credentials.clone()),
     );
 
-    let outcome = engine.replace_selection().expect("history is best-effort");
+    let outcome = engine.replace_selection(|_| {}).expect("history is best-effort");
 
     assert_eq!(outcome.translation.text, "Hello");
     assert_eq!(harness.capture.writes(), vec!["Hello".to_owned()]);
@@ -481,7 +546,7 @@ fn a_replace_that_the_focused_app_refuses_is_a_typed_error() {
         provider_saying("Hello"),
     );
 
-    let error = harness.engine().replace_selection().unwrap_err();
+    let error = harness.engine().replace_selection(|_| {}).unwrap_err();
 
     assert_eq!(error, EngineError::Capture(CaptureError::NotWritable));
     assert!(harness.history.entries().is_empty());
@@ -1105,7 +1170,7 @@ fn a_whitespace_only_selection_is_nothing_selected_for_replace_selection() {
 
         let error = harness
             .engine()
-            .replace_selection()
+            .replace_selection(|_| {})
             .expect_err("a blank Selection is nothing selected");
 
         assert_eq!(error, EngineError::Capture(CaptureError::NothingSelected));
@@ -1160,7 +1225,7 @@ fn replace_selection_still_replaces_a_selection_with_surrounding_whitespace() {
 
     harness
         .engine()
-        .replace_selection()
+        .replace_selection(|_| {})
         .expect("a non-blank Selection is still replaced");
 
     assert_eq!(harness.capture.writes(), vec!["Hello".to_owned()]);
@@ -1405,7 +1470,7 @@ fn replace_selection_records_one_row_through_the_seam() {
 
     harness
         .engine()
-        .replace_selection()
+        .replace_selection(|_| {})
         .expect("replace selection");
 
     assert_eq!(harness.history.records(), 1);

@@ -3,6 +3,7 @@
 //! implementation directly.
 
 mod frame;
+mod hud;
 mod main_thread;
 mod panel;
 mod shortcuts;
@@ -22,7 +23,8 @@ use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 use translator_core::{
     AzureProvider, CachedProvider, CaptureError, Direction, EngineError, GroqProvider,
     HistoryEntry, ImproveDelta, ImprovePart, Mode, MyMemoryProvider, PopupPrefill, ProviderId,
-    ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud, Replacement, Selection, Settings,
+    ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud, ReplacePhase, Replacement,
+    Selection, Settings,
     SettingsStore, ShortcutBindings, SpeechError, TextOutcome, Translation, TranslatorEngine,
     UreqHttpClient,
 };
@@ -54,6 +56,11 @@ struct AppState {
     /// The Accessibility permission as last observed, so the tray is only
     /// rebuilt when it actually changes rather than on every poll.
     accessibility: Mutex<bool>,
+    /// The Replace running now, if any. One at a time: a second shortcut while
+    /// the first is still waiting on a provider would race two writes into the
+    /// same Selection. It also carries the HUD that says what the Replace is
+    /// doing.
+    replace: Mutex<Option<hud::ReplaceHud>>,
 }
 
 impl AppState {
@@ -74,6 +81,43 @@ impl AppState {
             .lock()
             .expect("popup prefill lock")
             .take()
+    }
+
+    /// Claim the one Replace slot and arm its HUD. `false` means another
+    /// Replace still runs: the caller drops this one rather than racing it.
+    fn begin_replace(&self, app: &AppHandle, phase: ReplacePhase) -> bool {
+        let mut slot = self.replace.lock().expect("replace lock");
+        if slot.is_some() {
+            return false;
+        }
+        *slot = Some(hud::ReplaceHud::start(app, phase));
+        true
+    }
+
+    /// The engine moved to its next step. Ignored when no Replace owns the slot
+    /// (its session is already being taken away).
+    fn advance_replace(&self, app: &AppHandle, phase: ReplacePhase) {
+        if let Some(session) = self.replace.lock().expect("replace lock").as_ref() {
+            session.phase(app, phase);
+        }
+    }
+
+    /// End the Replace, whatever its outcome. The slot is freed before the HUD
+    /// waits for the main thread, so a Replace that starts while this one is
+    /// hiding is never refused behind a lock.
+    fn end_replace(&self, app: &AppHandle) {
+        if let Some(session) = self.replace.lock().expect("replace lock").take() {
+            session.finish(app);
+        }
+    }
+
+    /// The step the Replace running now is on, or `None` when none runs.
+    fn replace_phase(&self) -> Option<ReplacePhase> {
+        self.replace
+            .lock()
+            .expect("replace lock")
+            .as_ref()
+            .map(hud::ReplaceHud::phase_now)
     }
 
     fn route(&self, shortcut: &Shortcut) -> Option<shortcuts::ShortcutAction> {
@@ -165,11 +209,31 @@ async fn quick_translate(state: State<'_, AppState>) -> Result<QuickTranslation,
 }
 
 #[tauri::command]
-async fn replace_selection(state: State<'_, AppState>) -> Result<Replacement, EngineError> {
+async fn replace_selection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Replacement, EngineError> {
     let engine = Arc::clone(&state.engine);
     // No popup is part of this path — `⌃⌥R` translates and replaces without one
-    // — so the workflow has nothing to hide or bring back.
-    replace_result(workflows::replace(None, || engine.replace_selection()))
+    // — so the workflow has nothing to hide or bring back. The HUD is armed for
+    // every Replace, whichever surface asked for it.
+    if !state.begin_replace(&app, ReplacePhase::Capturing) {
+        return Err(replace_already_running());
+    }
+    let outcome = workflows::replace(None, || {
+        engine.replace_selection(|phase| state.advance_replace(&app, phase))
+    });
+    state.end_replace(&app);
+    replace_result(outcome)
+}
+
+/// The answer when a Replace is refused because another one still runs. The
+/// shortcut path drops its own silently; this exists for the surfaces that can
+/// say something.
+fn replace_already_running() -> EngineError {
+    EngineError::Capture(CaptureError::Unavailable {
+        reason: "a Replace is already running, so nothing was replaced".to_owned(),
+    })
 }
 
 /// Turn the workflow's outcome into the command's answer. A popup that could
@@ -203,6 +267,11 @@ async fn replace_with_translation(
     source_text: String,
     translation: Translation,
 ) -> Result<Replacement, EngineError> {
+    // The popup already showed the answer; only the write is left to report,
+    // and it starts in that step.
+    if !state.begin_replace(&app, ReplacePhase::Replacing) {
+        return Err(replace_already_running());
+    }
     let engine = Arc::clone(&state.engine);
     let outcome = main_thread::on_main_thread(&app, move |handle| {
         workflows::replace(
@@ -210,6 +279,7 @@ async fn replace_with_translation(
             || engine.replace_with_translation(&source_text, translation),
         )
     });
+    state.end_replace(&app);
     match outcome {
         Some(outcome) => replace_result(outcome),
         None => {
@@ -358,6 +428,14 @@ async fn take_popup_prefill(state: State<'_, AppState>) -> Result<Option<PopupPr
 #[tauri::command]
 async fn hide_popup(app: AppHandle) -> Result<(), ()> {
     main_thread::on_main_thread(&app, panel::hide).map_or(Err(()), |()| Ok(()))
+}
+
+/// The step the Replace running now is on, or `null` when none runs. The HUD
+/// page claims this on mount: an event emitted before the page finished loading
+/// would otherwise be lost, leaving an empty capsule on screen.
+#[tauri::command]
+async fn replace_hud_phase(state: State<'_, AppState>) -> Result<Option<ReplacePhase>, ()> {
+    Ok(state.replace_phase())
 }
 
 /// The popup's page measured its own content. The height it asks for is
@@ -623,10 +701,18 @@ fn read_aloud_selection(app: &AppHandle) {
 fn replace_selection_directly(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
-        let engine = Arc::clone(&app.state::<AppState>().engine);
-        if let workflows::ReplaceOutcome::Failed { error, .. } =
-            workflows::replace(None, || engine.replace_selection())
-        {
+        let state = app.state::<AppState>();
+        // A press while the previous Replace still waits on a provider is
+        // dropped: two writes into one Selection would race each other.
+        if !state.begin_replace(&app, ReplacePhase::Capturing) {
+            return;
+        }
+        let engine = Arc::clone(&state.engine);
+        let outcome = workflows::replace(None, || {
+            engine.replace_selection(|phase| state.advance_replace(&app, phase))
+        });
+        state.end_replace(&app);
+        if let workflows::ReplaceOutcome::Failed { error, .. } = outcome {
             show_replace_failure(&app, &error);
         }
     });
@@ -914,6 +1000,7 @@ fn main() {
             routes: Mutex::new(shortcuts::ShortcutRoutes::default()),
             launch_conflicts: Mutex::new(Vec::new()),
             accessibility: Mutex::new(false),
+            replace: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             quick_translate,
@@ -931,6 +1018,7 @@ fn main() {
             reopen_history_entry,
             take_selection_prefill,
             take_popup_prefill,
+            replace_hud_phase,
             hide_popup,
             set_popup_height,
             copy_text,
@@ -967,6 +1055,9 @@ fn main() {
             // once. Losing key is the dismissal gesture: clicking anywhere else
             // closes it, and typing returns to the source app.
             panel::prepare(app.handle())?;
+            // The HUD is a panel too, but a quieter one: never key, never
+            // clicked, shown only while a Replace runs.
+            hud::prepare(app.handle())?;
             if let Some(window) = app.get_webview_window(panel::POPUP_LABEL) {
                 let handle = app.handle().clone();
                 window.on_window_event(move |event| {

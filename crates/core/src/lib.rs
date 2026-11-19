@@ -16,7 +16,7 @@ pub mod providers;
 pub mod testing;
 
 pub use chunking::{chunk_text, join_chunks, MAX_CHUNK_CHARS};
-pub use engine::{history_cutoff, TranslatorEngine, HISTORY_RETENTION_SECONDS};
+pub use engine::{history_cutoff, ReplacePhase, TranslatorEngine, HISTORY_RETENTION_SECONDS};
 pub use error::{
     AuthFailure, CaptureError, CredentialError, EngineError, HistoryError, HttpError,
     ProviderError, SettingsError, SpeechError,

@@ -37,6 +37,20 @@
         "resizable": false,
         "alwaysOnTop": true,
         "skipTaskbar": true
+      },
+      {
+        "label": "hud",
+        "title": "Replace",
+        "url": "hud.html",
+        "width": 260,
+        "height": 52,
+        "transparent": true,
+        "visible": false,
+        "focus": false,
+        "decorations": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
       }
     ],
     "security": {

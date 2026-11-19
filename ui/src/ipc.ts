@@ -91,6 +91,10 @@ export interface Selection {
   text: string;
 }
 
+/** The steps a Replace moves through, as `core` reports them. The HUD names
+ * one; the popup draws its own phases with the same words. */
+export type ReplacePhase = "capturing" | "translating" | "replacing";
+
 /**
  * What the Translate Window starts with. A missing Selection is an empty
  * `selection`, never a failure; a missing permission is a typed failure.
@@ -241,6 +245,10 @@ export const ipc = {
     translation: Translation,
   ): Promise<Replacement> =>
     call("replace_with_translation", { sourceText, translation }),
+  /** The step the Replace running now is on, or `null` when none runs. The HUD
+   * claims this on mount, before an event can reach a page that just loaded. */
+  replaceHudPhase: (): Promise<ReplacePhase | null> =>
+    call("replace_hud_phase"),
   readAloud: (): Promise<ReadAloud> => call("read_aloud"),
   /** Translate or improve typed text. `direction` is omitted for the saved
    * Language Pair and given only after Swap, which applies to one window. */
@@ -404,6 +412,7 @@ export const EVENTS = {
   translationError: "translation-error",
   selectionPrefill: "selection-prefill",
   popupPrefill: "popup-prefill",
+  replaceHudPhase: "replace-hud-phase",
 } as const;
 
 /** Emitted after the popup is shown. The payload is empty: call
@@ -416,6 +425,15 @@ export function onPopupPrefill(handler: () => void): Promise<UnlistenFn> {
  * call `takeSelectionPrefill` to claim what was captured. */
 export function onSelectionPrefill(handler: () => void): Promise<UnlistenFn> {
   return listen(EVENTS.selectionPrefill, () => handler());
+}
+
+/** Every step of a Replace, and the current one again as the HUD appears. */
+export function onReplaceHudPhase(
+  handler: (phase: ReplacePhase) => void,
+): Promise<UnlistenFn> {
+  return listen<ReplacePhase>(EVENTS.replaceHudPhase, ({ payload }) =>
+    handler(payload),
+  );
 }
 
 export function onTranslationChunk(

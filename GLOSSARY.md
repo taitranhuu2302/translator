@@ -19,6 +19,10 @@ The language the user has configured as the output language. The other member of
 Overwriting the Selection in the app that owns it with its translation.
 _Avoid_: Swap, substitute, paste over
 
+**Replace HUD**:
+The small capsule beside the cursor that names the step a Replace is on. It appears only when the Replace outlasts a short grace period, never takes the keyboard, and never explains a failure.
+_Avoid_: Toast, tooltip, progress popup
+
 **Improve**:
 Rewriting a sentence the user wrote so it is correct, and offering a better version.
 _Avoid_: Correct, fix, polish

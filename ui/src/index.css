@@ -162,8 +162,9 @@
     background-color: var(--input);
   }
 
-  /* The Quick Translate popup window is transparent; its panel paints itself. */
-  body.popup-page {
+  /* The panel windows are transparent; their pages paint their own cards. */
+  body.popup-page,
+  body.hud-page {
     background: transparent;
     overflow: hidden;
   }

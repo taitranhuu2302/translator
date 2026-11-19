@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::Serialize;
+
 use crate::error::{CaptureError, EngineError};
 use crate::language::{guess_language, Direction, Language, LanguagePair};
 use crate::model::{
@@ -12,6 +14,21 @@ use crate::ports::{
     CredentialStore, HistoryStore, ImproveRequest, SelectionCapture, SettingsStore, SpeechOutput,
     TranslateRequest, TranslationProvider,
 };
+
+/// The steps a Replace moves through while it runs, in the order they start.
+///
+/// A surface can say what the shortcut is doing without guessing: `Capturing`
+/// covers reading the settings too, `Translating` includes a cache hit (so the
+/// label is true even when no provider is asked), and `Replacing` starts before
+/// the app is asked to accept the text. A step that is never reached — because
+/// an earlier one failed — is never reported.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplacePhase {
+    Capturing,
+    Translating,
+    Replacing,
+}
 
 /// The one seam every non-UI behaviour goes through. Views, panels, menu items and
 /// the shell's IPC commands talk to this type and never to a port implementation.
@@ -75,17 +92,27 @@ impl TranslatorEngine {
     /// A Selection that is only whitespace is nothing selected, so it is refused
     /// before a provider is consulted, history is written, or the app is asked
     /// to accept a replacement.
-    pub fn replace_selection(&self) -> Result<Replacement, EngineError> {
+    ///
+    /// `on_phase` is told each step as it begins, on the thread running this
+    /// call. It is the one reporting point: a surface that wants to show
+    /// progress reads it rather than re-deriving the steps from the ports.
+    pub fn replace_selection(
+        &self,
+        mut on_phase: impl FnMut(ReplacePhase),
+    ) -> Result<Replacement, EngineError> {
+        on_phase(ReplacePhase::Capturing);
         let selection = self.capture.read_selection()?;
         if is_blank(&selection.text) {
             return Err(EngineError::Capture(CaptureError::NothingSelected));
         }
         let settings = self.settings.load()?;
+        on_phase(ReplacePhase::Translating);
         let (translation, direction) = resolve_translation(
             self.provider.as_ref(),
             &selection.text,
             &settings.language_pair,
         )?;
+        on_phase(ReplacePhase::Replacing);
         self.capture.replace_selection(&translation.text)?;
         record_translation(
             self.history.as_ref(),
