@@ -15,6 +15,7 @@ import { ipc, onPopupPrefill, type EngineError } from "./ipc";
 import { performNoticeAction } from "./noticeActions";
 import { NoticeView } from "./NoticeView";
 import { OPENING, reduce } from "./popupState";
+import { REPLACE_PHASE_COPY } from "./statusCopy";
 
 /**
  * The room the card leaves inside the transparent window for its shadow, and
@@ -249,11 +250,11 @@ export function Popup() {
             ) : null}
 
             {state.phase === "opening" ? (
-              <StatusLine label="Reading the selection…" />
+              <StatusLine label={REPLACE_PHASE_COPY.capturing} />
             ) : null}
 
             {state.phase === "translating" ? (
-              <StatusLine label="Translating…" />
+              <StatusLine label={REPLACE_PHASE_COPY.translating} />
             ) : null}
 
             {answer ? (
@@ -263,7 +264,7 @@ export function Popup() {
             ) : null}
 
             {state.phase === "replacing" ? (
-              <StatusLine label="Replacing…" />
+              <StatusLine label={REPLACE_PHASE_COPY.replacing} />
             ) : null}
 
             {state.phase === "replace_failed" ||

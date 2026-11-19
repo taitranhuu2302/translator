@@ -65,6 +65,35 @@ pub fn delete(provider: ProviderId) -> Result<(), CredentialError> {
     }
 }
 
+/// Copy every stored key from one Keychain service to another, leaving the
+/// originals in place. Used once, when the bundle identifier changes: the
+/// previous build's items stay readable if the rename is rolled back.
+#[cfg(target_os = "macos")]
+pub fn copy_service(from: &str, to: &str) -> Result<(), CredentialError> {
+    if from == to {
+        return Ok(());
+    }
+    for provider in [ProviderId::Azure, ProviderId::Groq, ProviderId::MyMemory] {
+        let account = account(provider);
+        match generic_password(PasswordOptions::new_generic_password(from, account)) {
+            Ok(secret) => {
+                set_generic_password(to, account, &secret).map_err(storage_error)?;
+            }
+            // A provider with no stored key is the ordinary case, not a failure.
+            Err(error) if error.code() == errSecItemNotFound => {}
+            Err(error) => return Err(storage_error(error)),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn copy_service(_from: &str, _to: &str) -> Result<(), CredentialError> {
+    Err(CredentialError::Unavailable {
+        reason: "the Keychain is only available on macOS".to_owned(),
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn storage_error(error: security_framework::base::Error) -> CredentialError {
     CredentialError::Storage {

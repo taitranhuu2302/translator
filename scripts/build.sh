@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Package a real Translator.app and sign it with the stable local identity.
+# Package a real Neris.app and sign it with the stable local identity.
 # Packaging is part of the build: an unsigned or ad-hoc build loses the
 # Accessibility grant on every rebuild (docs/adr/0004-stable-signing-from-first-commit.md).
 set -euo pipefail
@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 IDENTITY="${TRANSLATOR_SIGNING_IDENTITY:-Translator Local Signing}"
-APP_NAME="Translator"
+APP_NAME="Neris"
 CERTIFICATE_ROOT="0210dfaace23b661886724d8588f09a5ee30882b"
 APP="target/bundle/$APP_NAME.app"
 
@@ -70,13 +70,13 @@ if [ "$PLIST_EXECUTABLE" != "translator" ]; then
 fi
 
 echo "==> building the icon"
-ICONSET="$(mktemp -d)/Translator.iconset"
+ICONSET="$(mktemp -d)/Neris.iconset"
 mkdir -p "$ICONSET"
 for size in 16 32 128 256 512; do
   sips -z "$size" "$size" crates/app/icons/icon.png --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
   sips -z "$((size * 2))" "$((size * 2))" crates/app/icons/icon.png --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
 done
-iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/Translator.icns"
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/Neris.icns"
 rm -rf "$(dirname "$ICONSET")"
 
 echo "==> signing with \"$IDENTITY\""

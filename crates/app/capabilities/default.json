@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for Translator windows",
-  "windows": ["main", "popup"],
+  "description": "Default capability for Neris windows",
+  "windows": ["main", "popup", "hud"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging"

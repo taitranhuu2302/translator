@@ -66,10 +66,10 @@ describe("the capture notice", () => {
 
     expect(notice.kind).toBe("capture");
     expect(notice.title).toBe(
-      "Translator needs Accessibility to read your selection.",
+      "Neris needs Accessibility to read your selection.",
     );
     expect(notice.detail).toBe(
-      "Open System Settings → Privacy & Security → Accessibility, enable Translator, then press the shortcut again.",
+      "Open System Settings → Privacy & Security → Accessibility, enable Neris, then press the shortcut again.",
     );
     expect(notice.action).toEqual({
       id: "open_accessibility_settings",

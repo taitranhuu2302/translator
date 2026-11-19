@@ -4161,7 +4161,7 @@ dependencies = [
 
 [[package]]
 name = "translator-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4177,7 +4177,7 @@ dependencies = [
 
 [[package]]
 name = "translator-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4188,7 +4188,7 @@ dependencies = [
 
 [[package]]
 name = "translator-platform-macos"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cc",
  "rusqlite",

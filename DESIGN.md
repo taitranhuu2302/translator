@@ -1,6 +1,6 @@
-# Neris Translator — Design System
+# Neris — Design System
 
-> Visual design reference for the Neris Translator desktop application. Covers themes, colors, typography, spacing, components, and overlay styles. Architecture and code structure are documented separately.
+> Visual design reference for the Neris desktop app. Covers themes, colors, typography, spacing, components, and overlay styles. Architecture and code structure are documented separately.
 
 ---
 
@@ -8,13 +8,27 @@
 
 | Attribute | Value |
 | --- | --- |
-| **Brand** | Neris |
-| **Product** | Translator |
+| **Brand** | Neris — the app, the mark and this design system share one name |
 | **Tagline** | Vietnamese ↔ English translation, always at your fingertips |
 | **Philosophy** | Imagination meets precision engineering — ocean depth, fluid movement, crafted warmth |
 | **Motto** | Dream like an artist. Build like an engineer. Finish like a craftsman. |
 | **Creative Source** | The ocean — depth, mystery, endless discovery |
 | **Theme** | **Dark-only** — no light mode. Designed for meetings, media consumption, and low-light environments |
+
+---
+
+## Brand Assets
+
+| Asset | File | Use |
+| --- | --- | --- |
+| Lockup — mark and wordmark | `docs/assets/neris-lockup.png` | README and external material |
+| App icon source | `crates/app/icons/icon.svg`, rendered to a 1024 px `icon.png` | Bundle icon, packaged as `Neris.icns` |
+| Menu bar mark | `crates/app/icons/tray-template.svg`, rendered to `tray-template.png` | Status item, set `icon_as_template(true)` |
+| In-app mark | `ui/src/components/NerisMark.tsx` | Onboarding and the Settings header |
+
+The lockup keeps the brand blue `#0042CC` of the source artwork. That blue is an asset colour, not a UI token: nothing in `ui/src/index.css` uses it, and the interface itself stays on the Neris Ocean palette below.
+
+The app icon is the white mark on the ocean gradient, inside macOS's rounded-square tile with the transparent margin the Dock expects. The menu bar takes the black template PNG instead, so the system tints it to match the menu bar rather than showing a white square.
 
 ---
 
@@ -216,7 +230,7 @@ The app takes strong visual cues from macOS as the primary design target:
 
 ## Overlay Window Styles
 
-The overlay is a separate Electron `BrowserWindow` with its own stylesheet.
+The overlay is a separate Tauri window with its own stylesheet.
 
 ### Unique Overlay Aspects
 
@@ -346,7 +360,7 @@ Uses `tw-animate-css` plugin for shadcn/ui animations (dropdown enter/exit, dial
 
 | Usage | Examples |
 | --- | --- |
-| **Brand/Logo** | `Waves` (ocean-themed) |
+| **Brand/Logo** | `NerisMark` — the app's own N mark (`ui/src/components/NerisMark.tsx`), not a Lucide icon |
 | **Navigation** | `Home`, `Archive`, `Settings` |
 | **Actions** | `Play`, `Square` (stop), `Eye` (show overlay), `Trash2` (delete), `Download` (model), `FolderPlus` |
 | **Status** | `Check`, `AlertTriangle`, `X`, `Loader` |

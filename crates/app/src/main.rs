@@ -3,6 +3,7 @@
 //! implementation directly.
 
 mod frame;
+mod hud;
 mod main_thread;
 mod panel;
 mod shortcuts;
@@ -22,13 +23,14 @@ use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 use translator_core::{
     AzureProvider, CachedProvider, CaptureError, Direction, EngineError, GroqProvider,
     HistoryEntry, ImproveDelta, ImprovePart, Mode, MyMemoryProvider, PopupPrefill, ProviderId,
-    ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud, Replacement, Selection, Settings,
+    ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud, ReplacePhase, Replacement,
+    Selection, Settings,
     SettingsStore, ShortcutBindings, SpeechError, TextOutcome, Translation, TranslatorEngine,
     UreqHttpClient,
 };
 use translator_platform_macos::{
-    clipboard, MacCredentialStore, MacHistoryStore, MacSelectionCapture, MacSettingsStore,
-    MacSpeechOutput,
+    clipboard, migrate_legacy_state, MacCredentialStore, MacHistoryStore, MacSelectionCapture,
+    MacSettingsStore, MacSpeechOutput, MigrationOutcome,
 };
 
 /// How many translations the in-memory cache remembers.
@@ -54,6 +56,11 @@ struct AppState {
     /// The Accessibility permission as last observed, so the tray is only
     /// rebuilt when it actually changes rather than on every poll.
     accessibility: Mutex<bool>,
+    /// The Replace running now, if any. One at a time: a second shortcut while
+    /// the first is still waiting on a provider would race two writes into the
+    /// same Selection. It also carries the HUD that says what the Replace is
+    /// doing.
+    replace: Mutex<Option<hud::ReplaceHud>>,
 }
 
 impl AppState {
@@ -74,6 +81,43 @@ impl AppState {
             .lock()
             .expect("popup prefill lock")
             .take()
+    }
+
+    /// Claim the one Replace slot and arm its HUD. `false` means another
+    /// Replace still runs: the caller drops this one rather than racing it.
+    fn begin_replace(&self, app: &AppHandle, phase: ReplacePhase) -> bool {
+        let mut slot = self.replace.lock().expect("replace lock");
+        if slot.is_some() {
+            return false;
+        }
+        *slot = Some(hud::ReplaceHud::start(app, phase));
+        true
+    }
+
+    /// The engine moved to its next step. Ignored when no Replace owns the slot
+    /// (its session is already being taken away).
+    fn advance_replace(&self, app: &AppHandle, phase: ReplacePhase) {
+        if let Some(session) = self.replace.lock().expect("replace lock").as_ref() {
+            session.phase(app, phase);
+        }
+    }
+
+    /// End the Replace, whatever its outcome. The slot is freed before the HUD
+    /// waits for the main thread, so a Replace that starts while this one is
+    /// hiding is never refused behind a lock.
+    fn end_replace(&self, app: &AppHandle) {
+        if let Some(session) = self.replace.lock().expect("replace lock").take() {
+            session.finish(app);
+        }
+    }
+
+    /// The step the Replace running now is on, or `None` when none runs.
+    fn replace_phase(&self) -> Option<ReplacePhase> {
+        self.replace
+            .lock()
+            .expect("replace lock")
+            .as_ref()
+            .map(hud::ReplaceHud::phase_now)
     }
 
     fn route(&self, shortcut: &Shortcut) -> Option<shortcuts::ShortcutAction> {
@@ -165,11 +209,31 @@ async fn quick_translate(state: State<'_, AppState>) -> Result<QuickTranslation,
 }
 
 #[tauri::command]
-async fn replace_selection(state: State<'_, AppState>) -> Result<Replacement, EngineError> {
+async fn replace_selection(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Replacement, EngineError> {
     let engine = Arc::clone(&state.engine);
     // No popup is part of this path — `⌃⌥R` translates and replaces without one
-    // — so the workflow has nothing to hide or bring back.
-    replace_result(workflows::replace(None, || engine.replace_selection()))
+    // — so the workflow has nothing to hide or bring back. The HUD is armed for
+    // every Replace, whichever surface asked for it.
+    if !state.begin_replace(&app, ReplacePhase::Capturing) {
+        return Err(replace_already_running());
+    }
+    let outcome = workflows::replace(None, || {
+        engine.replace_selection(|phase| state.advance_replace(&app, phase))
+    });
+    state.end_replace(&app);
+    replace_result(outcome)
+}
+
+/// The answer when a Replace is refused because another one still runs. The
+/// shortcut path drops its own silently; this exists for the surfaces that can
+/// say something.
+fn replace_already_running() -> EngineError {
+    EngineError::Capture(CaptureError::Unavailable {
+        reason: "a Replace is already running, so nothing was replaced".to_owned(),
+    })
 }
 
 /// Turn the workflow's outcome into the command's answer. A popup that could
@@ -181,7 +245,7 @@ fn replace_result(outcome: workflows::ReplaceOutcome) -> Result<Replacement, Eng
         workflows::ReplaceOutcome::Failed { error, restore } => {
             if let workflows::PopupRestore::Failed(problem) = restore {
                 eprintln!(
-                    "Translator: the popup could not be shown after a failed Replace: {problem}"
+                    "Neris: the popup could not be shown after a failed Replace: {problem}"
                 );
             }
             Err(error)
@@ -203,6 +267,11 @@ async fn replace_with_translation(
     source_text: String,
     translation: Translation,
 ) -> Result<Replacement, EngineError> {
+    // The popup already showed the answer; only the write is left to report,
+    // and it starts in that step.
+    if !state.begin_replace(&app, ReplacePhase::Replacing) {
+        return Err(replace_already_running());
+    }
     let engine = Arc::clone(&state.engine);
     let outcome = main_thread::on_main_thread(&app, move |handle| {
         workflows::replace(
@@ -210,10 +279,11 @@ async fn replace_with_translation(
             || engine.replace_with_translation(&source_text, translation),
         )
     });
+    state.end_replace(&app);
     match outcome {
         Some(outcome) => replace_result(outcome),
         None => {
-            eprintln!("Translator: Replace did not run: the main thread did not answer");
+            eprintln!("Neris: Replace did not run: the main thread did not answer");
             Err(EngineError::Capture(CaptureError::Unavailable {
                 reason: "the main thread did not answer, so nothing was replaced".to_owned(),
             }))
@@ -360,6 +430,14 @@ async fn hide_popup(app: AppHandle) -> Result<(), ()> {
     main_thread::on_main_thread(&app, panel::hide).map_or(Err(()), |()| Ok(()))
 }
 
+/// The step the Replace running now is on, or `null` when none runs. The HUD
+/// page claims this on mount: an event emitted before the page finished loading
+/// would otherwise be lost, leaving an empty capsule on screen.
+#[tauri::command]
+async fn replace_hud_phase(state: State<'_, AppState>) -> Result<Option<ReplacePhase>, ()> {
+    Ok(state.replace_phase())
+}
+
 /// The popup's page measured its own content. The height it asks for is
 /// clamped and applied on the main thread, and the panel is placed again so the
 /// card stays where it opened. A failure is not worth a notice of its own: the
@@ -437,14 +515,14 @@ fn open_quick_translate(app: &AppHandle) {
 
         let shown = main_thread::on_main_thread(&app, move |handle| {
             if let Err(error) = panel::show(handle) {
-                eprintln!("Translator: the Quick Translate popup could not open: {error}");
+                eprintln!("Neris: the Quick Translate popup could not open: {error}");
                 return;
             }
             let _ = handle.emit_to(panel::POPUP_LABEL, panel::POPUP_PREFILL_EVENT, ());
         });
         if shown.is_none() {
             eprintln!(
-                "Translator: the Quick Translate popup could not be shown: the main thread did not answer"
+                "Neris: the Quick Translate popup could not be shown: the main thread did not answer"
             );
         }
     });
@@ -558,7 +636,7 @@ fn track_frame(app: &AppHandle) {
                 }
             }
             if let Err(error) = saver.save(latest) {
-                eprintln!("Translator: the window frame was not saved: {error}");
+                eprintln!("Neris: the window frame was not saved: {error}");
             }
         }
     });
@@ -576,7 +654,7 @@ fn track_frame(app: &AppHandle) {
             api.prevent_close();
             if let Some(frame) = frame_of(&events_window) {
                 if let Err(error) = store.save(frame) {
-                    eprintln!("Translator: the window frame was not saved: {error}");
+                    eprintln!("Neris: the window frame was not saved: {error}");
                 }
             }
             let _ = events_window.hide();
@@ -593,10 +671,10 @@ fn maintain_history(app: &AppHandle) {
     std::thread::spawn(move || loop {
         match app.state::<AppState>().engine.purge_history() {
             Ok(removed) if removed > 0 => {
-                eprintln!("Translator: purged {removed} history entries older than 30 days");
+                eprintln!("Neris: purged {removed} history entries older than 30 days");
             }
             Ok(_) => {}
-            Err(error) => eprintln!("Translator: history purge failed: {error}"),
+            Err(error) => eprintln!("Neris: history purge failed: {error}"),
         }
         std::thread::sleep(Duration::from_secs(24 * 60 * 60));
     });
@@ -623,10 +701,18 @@ fn read_aloud_selection(app: &AppHandle) {
 fn replace_selection_directly(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
-        let engine = Arc::clone(&app.state::<AppState>().engine);
-        if let workflows::ReplaceOutcome::Failed { error, .. } =
-            workflows::replace(None, || engine.replace_selection())
-        {
+        let state = app.state::<AppState>();
+        // A press while the previous Replace still waits on a provider is
+        // dropped: two writes into one Selection would race each other.
+        if !state.begin_replace(&app, ReplacePhase::Capturing) {
+            return;
+        }
+        let engine = Arc::clone(&state.engine);
+        let outcome = workflows::replace(None, || {
+            engine.replace_selection(|phase| state.advance_replace(&app, phase))
+        });
+        state.end_replace(&app);
+        if let workflows::ReplaceOutcome::Failed { error, .. } = outcome {
             show_replace_failure(&app, &error);
         }
     });
@@ -639,11 +725,11 @@ fn replace_selection_directly(app: &AppHandle) {
 /// catch-all arm keeps a newly added `CaptureError` variant handled here until
 /// this dialog gives it words of its own.
 fn show_replace_failure(app: &AppHandle, error: &EngineError) {
-    eprintln!("Translator: Replace failed: {error}");
+    eprintln!("Neris: Replace failed: {error}");
     let message = match error {
         EngineError::Capture(CaptureError::NoAccessibility) => {
-            "Translator needs Accessibility to replace your selection. Open System Settings → \
-             Privacy & Security → Accessibility, enable Translator, then try again."
+            "Neris needs Accessibility to replace your selection. Open System Settings → \
+             Privacy & Security → Accessibility, enable Neris, then try again."
                 .to_owned()
         }
         EngineError::Capture(CaptureError::SecureInput) => {
@@ -669,7 +755,7 @@ fn show_replace_failure(app: &AppHandle, error: &EngineError) {
 }
 
 fn show_read_aloud_failure(app: &AppHandle, error: &EngineError) {
-    eprintln!("Translator: Read Aloud failed: {error}");
+    eprintln!("Neris: Read Aloud failed: {error}");
     let message = match error {
         EngineError::Speech(SpeechError::NoVoice { language }) => format!(
             "No voice is installed for {language}. Add one in System Settings → \
@@ -709,7 +795,7 @@ async fn rebind_shortcut(
         Some(Ok(outcome)) => outcome,
         Some(Err(())) => return Err(()),
         None => {
-            eprintln!("Translator: the shortcut change did not run: the main thread did not answer");
+            eprintln!("Neris: the shortcut change did not run: the main thread did not answer");
             return Err(());
         }
     };
@@ -743,7 +829,7 @@ async fn reset_shortcuts_and_language_pair(
         Some(Ok(outcome)) => outcome,
         Some(Err(())) => return Err(()),
         None => {
-            eprintln!("Translator: the shortcuts were not reset: the main thread did not answer");
+            eprintln!("Neris: the shortcuts were not reset: the main thread did not answer");
             return Err(());
         }
     };
@@ -757,7 +843,7 @@ async fn reset_shortcuts_and_language_pair(
 #[tauri::command]
 async fn start_at_login_enabled(app: AppHandle) -> Result<bool, ()> {
     workflows::LoginItem::is_enabled(&workflows::ShellLoginItem::new(app)).map_err(|error| {
-        eprintln!("Translator: the login item state could not be read: {error}");
+        eprintln!("Neris: the login item state could not be read: {error}");
     })
 }
 
@@ -778,7 +864,7 @@ async fn set_start_at_login(
         )
     });
     outcome.ok_or_else(|| {
-        eprintln!("Translator: the login item change did not run: the main thread did not answer");
+        eprintln!("Neris: the login item change did not run: the main thread did not answer");
     })
 }
 
@@ -804,7 +890,7 @@ fn handle_tray_event(app: &AppHandle, id: &str) {
     match id {
         tray::ACCESSIBILITY_NOT_GRANTED_ID => {
             if let Err(error) = app.state::<AppState>().engine.open_accessibility_settings() {
-                eprintln!("Translator: Accessibility settings could not be opened: {error}");
+                eprintln!("Neris: Accessibility settings could not be opened: {error}");
             }
         }
         tray::QUIT_ID => app.exit(0),
@@ -817,11 +903,14 @@ fn handle_tray_event(app: &AppHandle, id: &str) {
 fn build_tray(app: &AppHandle, bindings: &ShortcutBindings, granted: bool) -> tauri::Result<()> {
     let menu = tray::menu(app, bindings, granted)?;
 
-    // The 1024 px app icon is scaled to the menu bar by the tray implementation.
-    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
+    // A template image: macOS draws it in the menu bar's own foreground colour,
+    // so it stays legible in both appearances. It is drawn at 18 pt, and the
+    // file is 72 px — four pixels per point for a Retina menu bar to sample.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png"))?;
     TrayIconBuilder::with_id(tray::TRAY_ID)
-        .tooltip("Translator")
+        .tooltip("Neris")
         .icon(icon)
+        .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| handle_tray_event(app, event.id().as_ref()))
@@ -830,6 +919,21 @@ fn build_tray(app: &AppHandle, bindings: &ShortcutBindings, granted: bool) -> ta
 }
 
 fn main() {
+    // Before any store is built: the previous identity's settings, history and
+    // keys are copied into this one's directory, so the first read below finds
+    // them. Failing here is not fatal — the app starts with whatever it has and
+    // the copy is retried next launch.
+    match migrate_legacy_state() {
+        Ok(MigrationOutcome::Copied { from }) => {
+            eprintln!(
+                "Neris: carried settings, history and keys over from {}",
+                from.display()
+            );
+        }
+        Ok(MigrationOutcome::NotNeeded) => {}
+        Err(error) => eprintln!("Neris: the previous version's state was not carried over: {error}"),
+    }
+
     // Azure F0 first when a key is stored, then the keyless provider. Both sit
     // behind the cache, so a repeated Selection costs nothing. The region is read
     // from settings per request: changing it takes effect without a restart.
@@ -896,6 +1000,7 @@ fn main() {
             routes: Mutex::new(shortcuts::ShortcutRoutes::default()),
             launch_conflicts: Mutex::new(Vec::new()),
             accessibility: Mutex::new(false),
+            replace: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             quick_translate,
@@ -913,6 +1018,7 @@ fn main() {
             reopen_history_entry,
             take_selection_prefill,
             take_popup_prefill,
+            replace_hud_phase,
             hide_popup,
             set_popup_height,
             copy_text,
@@ -949,6 +1055,9 @@ fn main() {
             // once. Losing key is the dismissal gesture: clicking anywhere else
             // closes it, and typing returns to the source app.
             panel::prepare(app.handle())?;
+            // The HUD is a panel too, but a quieter one: never key, never
+            // clicked, shown only while a Replace runs.
+            hud::prepare(app.handle())?;
             if let Some(window) = app.get_webview_window(panel::POPUP_LABEL) {
                 let handle = app.handle().clone();
                 window.on_window_event(move |event| {
@@ -1002,5 +1111,5 @@ fn main() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running Translator");
+        .expect("error while running Neris");
 }

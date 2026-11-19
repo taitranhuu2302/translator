@@ -1,4 +1,6 @@
-# Translator
+# Neris
+
+<img src="docs/assets/neris-lockup.png" alt="Neris" width="260" />
 
 A macOS menu-bar app for translating text you have selected in any app — without leaving the app you are typing in.
 
@@ -55,7 +57,7 @@ npm test              # UI tests
 npm run build         # build ui/dist
 
 ./scripts/test.sh     # typecheck, UI tests and build, IPC boundary and identity checks, cargo test
-./scripts/build.sh    # build the frontend and the app, then sign target/bundle/Translator.app
+./scripts/build.sh    # build the frontend and the app, then sign target/bundle/Neris.app
 ```
 
 The per-package commands (`npm --prefix ui run test`, `npm --prefix ui run build`) still work for a fast loop on the UI alone.
@@ -72,6 +74,10 @@ npx tauri dev         # vite on :1420 with HMR, the webview talks to the real en
 `tauri dev` runs the unsigned `target/debug/translator`, so the Accessibility grant does not apply: Selection capture and the non-activating popup only behave under `scripts/build.sh`. The production build turns on the `custom-protocol` feature, which is what embeds `ui/dist` rather than loading the dev server.
 
 `ui/preview.html` renders every surface and state with mock data: run `npm --prefix ui run dev` and open http://localhost:1420/preview.html. It is not an input of the production build, so no mock data ships inside the app.
+
+## Upgrading from 0.1.0
+
+The app is now Neris and its bundle identifier changed, which macOS keys the Accessibility grant to. On first launch the app copies the previous version's settings, history and stored keys into the new location and leaves the old ones alone; you then re-grant Accessibility once and turn "Start at login" back on once. See [ADR-0007](docs/adr/0007-rename-to-neris.md).
 
 ## Project docs
 

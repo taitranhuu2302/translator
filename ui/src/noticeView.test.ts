@@ -28,8 +28,8 @@ function textOf(node: unknown): string[] {
 
 const notice: Notice = {
   kind: "capture",
-  title: "Translator needs Accessibility to read your selection.",
-  detail: "Open System Settings and enable Translator.",
+  title: "Neris needs Accessibility to read your selection.",
+  detail: "Open System Settings and enable Neris.",
   action: { id: "open_accessibility_settings", label: "Open System Settings" },
 };
 

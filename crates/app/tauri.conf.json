@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Translator",
-  "version": "0.1.0",
-  "identifier": "com.taitran.translator",
+  "productName": "Neris",
+  "version": "0.2.0",
+  "identifier": "com.taitran.neris",
   "build": {
     "beforeDevCommand": "npm --prefix ui run dev",
     "devUrl": "http://localhost:1420",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Translator",
+        "title": "Neris",
         "width": 960,
         "height": 640,
         "minWidth": 680,
@@ -30,6 +30,20 @@
         "url": "popup.html",
         "width": 420,
         "height": 220,
+        "transparent": true,
+        "visible": false,
+        "focus": false,
+        "decorations": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
+      },
+      {
+        "label": "hud",
+        "title": "Replace",
+        "url": "hud.html",
+        "width": 260,
+        "height": 52,
         "transparent": true,
         "visible": false,
         "focus": false,

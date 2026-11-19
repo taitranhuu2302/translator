@@ -88,7 +88,7 @@ export function noticeForSettingsFailure(reason: string | null): Notice {
   return {
     kind: "error",
     title: SETTINGS_READ_FAILED,
-    detail: reason ?? "Quit and reopen Translator.",
+    detail: reason ?? "Quit and reopen Neris.",
   };
 }
 
@@ -102,9 +102,9 @@ export function noticeForCapture(capture: CaptureError): Notice {
   if (capture === "no_accessibility") {
     return {
       kind: "capture",
-      title: "Translator needs Accessibility to read your selection.",
+      title: "Neris needs Accessibility to read your selection.",
       detail:
-        "Open System Settings → Privacy & Security → Accessibility, enable Translator, then press the shortcut again.",
+        "Open System Settings → Privacy & Security → Accessibility, enable Neris, then press the shortcut again.",
       action: {
         id: "open_accessibility_settings",
         label: "Open System Settings",
@@ -162,7 +162,7 @@ function noticeForProvider(error: ProviderError): Notice {
       kind: "offline",
       title: "You appear to be offline.",
       detail:
-        "Translator needs a network connection. Reconnect, then try again.",
+        "Neris needs a network connection. Reconnect, then try again.",
     };
   }
   if (error === "not_configured") {

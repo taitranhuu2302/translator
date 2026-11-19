@@ -20,11 +20,12 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     rollupOptions: {
-      // Two windows: the Translate Window and the Quick Translate popup.
-      // The preview harness is deliberately absent: it is dev-only.
+      // Three windows: the Translate Window, the Quick Translate popup and the
+      // Replace HUD. The preview harness is deliberately absent: it is dev-only.
       input: {
         main: "index.html",
         popup: "popup.html",
+        hud: "hud.html",
       },
     },
   },
