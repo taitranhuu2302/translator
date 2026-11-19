@@ -285,7 +285,7 @@ export function SettingsPane({
       <Section title="Startup">
         <div className="flex items-center justify-between gap-3">
           <Label htmlFor="start-at-login" className="font-normal">
-            Start Translator at login
+            Start Neris at login
           </Label>
           <Switch
             id="start-at-login"
@@ -310,7 +310,7 @@ export function SettingsPane({
             className="rounded-lg border border-border/70 bg-card/60 px-3 py-2.5"
           >
             <p className="text-xs text-foreground">
-              These shortcuts were not live when Translator started:
+              These shortcuts were not live when Neris started:
             </p>
             <ul className="mt-1.5 flex flex-col gap-1">
               {problemConflicts.map((status) => (

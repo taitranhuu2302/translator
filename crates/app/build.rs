@@ -16,7 +16,7 @@ fn main() {
             dist.join("index.html"),
             format!(
                 "<!doctype html><meta charset=\"utf-8\">\
-                 <title>Translator</title>{}\
+                 <title>Neris</title>{}\
                  <p>The frontend has not been built. Run `npm run build`.</p>",
                 PLACEHOLDER_MARKER.trim()
             ),

@@ -27,8 +27,8 @@ use translator_core::{
     UreqHttpClient,
 };
 use translator_platform_macos::{
-    clipboard, MacCredentialStore, MacHistoryStore, MacSelectionCapture, MacSettingsStore,
-    MacSpeechOutput,
+    clipboard, migrate_legacy_state, MacCredentialStore, MacHistoryStore, MacSelectionCapture,
+    MacSettingsStore, MacSpeechOutput, MigrationOutcome,
 };
 
 /// How many translations the in-memory cache remembers.
@@ -181,7 +181,7 @@ fn replace_result(outcome: workflows::ReplaceOutcome) -> Result<Replacement, Eng
         workflows::ReplaceOutcome::Failed { error, restore } => {
             if let workflows::PopupRestore::Failed(problem) = restore {
                 eprintln!(
-                    "Translator: the popup could not be shown after a failed Replace: {problem}"
+                    "Neris: the popup could not be shown after a failed Replace: {problem}"
                 );
             }
             Err(error)
@@ -213,7 +213,7 @@ async fn replace_with_translation(
     match outcome {
         Some(outcome) => replace_result(outcome),
         None => {
-            eprintln!("Translator: Replace did not run: the main thread did not answer");
+            eprintln!("Neris: Replace did not run: the main thread did not answer");
             Err(EngineError::Capture(CaptureError::Unavailable {
                 reason: "the main thread did not answer, so nothing was replaced".to_owned(),
             }))
@@ -437,14 +437,14 @@ fn open_quick_translate(app: &AppHandle) {
 
         let shown = main_thread::on_main_thread(&app, move |handle| {
             if let Err(error) = panel::show(handle) {
-                eprintln!("Translator: the Quick Translate popup could not open: {error}");
+                eprintln!("Neris: the Quick Translate popup could not open: {error}");
                 return;
             }
             let _ = handle.emit_to(panel::POPUP_LABEL, panel::POPUP_PREFILL_EVENT, ());
         });
         if shown.is_none() {
             eprintln!(
-                "Translator: the Quick Translate popup could not be shown: the main thread did not answer"
+                "Neris: the Quick Translate popup could not be shown: the main thread did not answer"
             );
         }
     });
@@ -558,7 +558,7 @@ fn track_frame(app: &AppHandle) {
                 }
             }
             if let Err(error) = saver.save(latest) {
-                eprintln!("Translator: the window frame was not saved: {error}");
+                eprintln!("Neris: the window frame was not saved: {error}");
             }
         }
     });
@@ -576,7 +576,7 @@ fn track_frame(app: &AppHandle) {
             api.prevent_close();
             if let Some(frame) = frame_of(&events_window) {
                 if let Err(error) = store.save(frame) {
-                    eprintln!("Translator: the window frame was not saved: {error}");
+                    eprintln!("Neris: the window frame was not saved: {error}");
                 }
             }
             let _ = events_window.hide();
@@ -593,10 +593,10 @@ fn maintain_history(app: &AppHandle) {
     std::thread::spawn(move || loop {
         match app.state::<AppState>().engine.purge_history() {
             Ok(removed) if removed > 0 => {
-                eprintln!("Translator: purged {removed} history entries older than 30 days");
+                eprintln!("Neris: purged {removed} history entries older than 30 days");
             }
             Ok(_) => {}
-            Err(error) => eprintln!("Translator: history purge failed: {error}"),
+            Err(error) => eprintln!("Neris: history purge failed: {error}"),
         }
         std::thread::sleep(Duration::from_secs(24 * 60 * 60));
     });
@@ -639,11 +639,11 @@ fn replace_selection_directly(app: &AppHandle) {
 /// catch-all arm keeps a newly added `CaptureError` variant handled here until
 /// this dialog gives it words of its own.
 fn show_replace_failure(app: &AppHandle, error: &EngineError) {
-    eprintln!("Translator: Replace failed: {error}");
+    eprintln!("Neris: Replace failed: {error}");
     let message = match error {
         EngineError::Capture(CaptureError::NoAccessibility) => {
-            "Translator needs Accessibility to replace your selection. Open System Settings → \
-             Privacy & Security → Accessibility, enable Translator, then try again."
+            "Neris needs Accessibility to replace your selection. Open System Settings → \
+             Privacy & Security → Accessibility, enable Neris, then try again."
                 .to_owned()
         }
         EngineError::Capture(CaptureError::SecureInput) => {
@@ -669,7 +669,7 @@ fn show_replace_failure(app: &AppHandle, error: &EngineError) {
 }
 
 fn show_read_aloud_failure(app: &AppHandle, error: &EngineError) {
-    eprintln!("Translator: Read Aloud failed: {error}");
+    eprintln!("Neris: Read Aloud failed: {error}");
     let message = match error {
         EngineError::Speech(SpeechError::NoVoice { language }) => format!(
             "No voice is installed for {language}. Add one in System Settings → \
@@ -709,7 +709,7 @@ async fn rebind_shortcut(
         Some(Ok(outcome)) => outcome,
         Some(Err(())) => return Err(()),
         None => {
-            eprintln!("Translator: the shortcut change did not run: the main thread did not answer");
+            eprintln!("Neris: the shortcut change did not run: the main thread did not answer");
             return Err(());
         }
     };
@@ -743,7 +743,7 @@ async fn reset_shortcuts_and_language_pair(
         Some(Ok(outcome)) => outcome,
         Some(Err(())) => return Err(()),
         None => {
-            eprintln!("Translator: the shortcuts were not reset: the main thread did not answer");
+            eprintln!("Neris: the shortcuts were not reset: the main thread did not answer");
             return Err(());
         }
     };
@@ -757,7 +757,7 @@ async fn reset_shortcuts_and_language_pair(
 #[tauri::command]
 async fn start_at_login_enabled(app: AppHandle) -> Result<bool, ()> {
     workflows::LoginItem::is_enabled(&workflows::ShellLoginItem::new(app)).map_err(|error| {
-        eprintln!("Translator: the login item state could not be read: {error}");
+        eprintln!("Neris: the login item state could not be read: {error}");
     })
 }
 
@@ -778,7 +778,7 @@ async fn set_start_at_login(
         )
     });
     outcome.ok_or_else(|| {
-        eprintln!("Translator: the login item change did not run: the main thread did not answer");
+        eprintln!("Neris: the login item change did not run: the main thread did not answer");
     })
 }
 
@@ -804,7 +804,7 @@ fn handle_tray_event(app: &AppHandle, id: &str) {
     match id {
         tray::ACCESSIBILITY_NOT_GRANTED_ID => {
             if let Err(error) = app.state::<AppState>().engine.open_accessibility_settings() {
-                eprintln!("Translator: Accessibility settings could not be opened: {error}");
+                eprintln!("Neris: Accessibility settings could not be opened: {error}");
             }
         }
         tray::QUIT_ID => app.exit(0),
@@ -817,11 +817,14 @@ fn handle_tray_event(app: &AppHandle, id: &str) {
 fn build_tray(app: &AppHandle, bindings: &ShortcutBindings, granted: bool) -> tauri::Result<()> {
     let menu = tray::menu(app, bindings, granted)?;
 
-    // The 1024 px app icon is scaled to the menu bar by the tray implementation.
-    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
+    // A template image: macOS draws it in the menu bar's own foreground colour,
+    // so it stays legible in both appearances. It is drawn at 18 pt, and the
+    // file is 72 px — four pixels per point for a Retina menu bar to sample.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png"))?;
     TrayIconBuilder::with_id(tray::TRAY_ID)
-        .tooltip("Translator")
+        .tooltip("Neris")
         .icon(icon)
+        .icon_as_template(true)
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| handle_tray_event(app, event.id().as_ref()))
@@ -830,6 +833,21 @@ fn build_tray(app: &AppHandle, bindings: &ShortcutBindings, granted: bool) -> ta
 }
 
 fn main() {
+    // Before any store is built: the previous identity's settings, history and
+    // keys are copied into this one's directory, so the first read below finds
+    // them. Failing here is not fatal — the app starts with whatever it has and
+    // the copy is retried next launch.
+    match migrate_legacy_state() {
+        Ok(MigrationOutcome::Copied { from }) => {
+            eprintln!(
+                "Neris: carried settings, history and keys over from {}",
+                from.display()
+            );
+        }
+        Ok(MigrationOutcome::NotNeeded) => {}
+        Err(error) => eprintln!("Neris: the previous version's state was not carried over: {error}"),
+    }
+
     // Azure F0 first when a key is stored, then the keyless provider. Both sit
     // behind the cache, so a repeated Selection costs nothing. The region is read
     // from settings per request: changing it takes effect without a restart.
@@ -1002,5 +1020,5 @@ fn main() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running Translator");
+        .expect("error while running Neris");
 }

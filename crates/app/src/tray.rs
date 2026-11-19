@@ -107,7 +107,7 @@ pub fn tray_entries(bindings: &ShortcutBindings, granted: bool) -> Vec<TrayEntry
     entries.push(TrayEntry::separator());
     entries.push(TrayEntry {
         id: QUIT_ID.to_owned(),
-        label: "Quit Translator".to_owned(),
+        label: "Quit Neris".to_owned(),
         accelerator: None,
     });
     entries
@@ -137,7 +137,7 @@ pub fn menu(
             Ok(item) => item,
             Err(error) => {
                 eprintln!(
-                    "Translator: the tray row for {} has no key equivalent: {error}",
+                    "Neris: the tray row for {} has no key equivalent: {error}",
                     entry.id
                 );
                 MenuItem::with_id(app, &entry.id, &entry.label, true, None::<&str>)?
@@ -157,23 +157,23 @@ pub fn refresh_tray(app: &AppHandle, bindings: &ShortcutBindings) {
     let bindings = bindings.clone();
     let outcome = on_main_thread(app, move |handle| {
         let Some(icon) = handle.tray_by_id(TRAY_ID) else {
-            eprintln!("Translator: the tray menu was not updated: the menu bar item is missing");
+            eprintln!("Neris: the tray menu was not updated: the menu bar item is missing");
             return;
         };
         let granted = handle.state::<AppState>().engine.accessibility_granted();
         let menu = match menu(handle, &bindings, granted) {
             Ok(menu) => menu,
             Err(error) => {
-                eprintln!("Translator: the tray menu was not built: {error}");
+                eprintln!("Neris: the tray menu was not built: {error}");
                 return;
             }
         };
         if let Err(error) = icon.set_menu(Some(menu)) {
-            eprintln!("Translator: the tray menu was not updated: {error}");
+            eprintln!("Neris: the tray menu was not updated: {error}");
         }
     });
     if outcome.is_none() {
-        eprintln!("Translator: the tray menu was not updated: the main thread did not answer");
+        eprintln!("Neris: the tray menu was not updated: the main thread did not answer");
     }
 }
 
@@ -268,7 +268,7 @@ mod tests {
                 "quit",
             ]
         );
-        assert_eq!(entries.last().expect("quit").label, "Quit Translator");
+        assert_eq!(entries.last().expect("quit").label, "Quit Neris");
         assert_eq!(
             entries.iter().filter(|entry| entry.is_separator()).count(),
             2

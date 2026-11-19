@@ -21,10 +21,25 @@ pub(crate) fn identifier() -> String {
 /// settings live. Because it follows the identifier, renaming the bundle moves
 /// both files to a new directory (docs/adr/0004-stable-signing-from-first-commit.md).
 pub(crate) fn application_support_dir() -> PathBuf {
+    application_support_dir_for(&identifier())
+}
+
+/// The same directory for an identifier this process is not running under. The
+/// one-time migration reads it to find where the previous identity kept its
+/// files; nothing else should need it.
+pub(crate) fn application_support_dir_for(identifier: &str) -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_default();
-    home.join("Library/Application Support").join(identifier())
+    home.join("Library/Application Support").join(identifier)
+}
+
+/// Whether this process runs from a real `.app` bundle, rather than a bare
+/// `cargo run` binary or a test binary. The migration only makes sense for the
+/// shipped app: a dev build shares the plist's identifier but is not the
+/// installation whose state is being carried over.
+pub(crate) fn running_from_bundle() -> bool {
+    runtime_identifier().is_some()
 }
 
 #[cfg(target_os = "macos")]

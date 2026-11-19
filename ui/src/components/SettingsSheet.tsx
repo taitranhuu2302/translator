@@ -1,3 +1,4 @@
+import { NerisMark } from "@/components/NerisMark";
 import {
   Sheet,
   SheetContent,
@@ -39,7 +40,10 @@ export function SettingsSheet({
         className="w-[440px] gap-0 p-0 sm:max-w-[440px]"
       >
         <SheetHeader className="gap-1 border-b border-border/60 px-4 py-3.5 pr-12">
-          <SheetTitle>Settings</SheetTitle>
+          <SheetTitle className="flex items-center gap-2">
+            <NerisMark className="h-4 w-4 text-primary" />
+            Settings
+          </SheetTitle>
           <SheetDescription className="text-xs">
             Saved on this Mac, never synced
           </SheetDescription>

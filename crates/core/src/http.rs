@@ -22,7 +22,7 @@ impl Default for UreqHttpClient {
             agent: ureq::AgentBuilder::new()
                 .timeout_connect(std::time::Duration::from_secs(10))
                 .timeout(std::time::Duration::from_secs(30))
-                .user_agent(concat!("Translator/", env!("CARGO_PKG_VERSION")))
+                .user_agent(concat!("Neris/", env!("CARGO_PKG_VERSION")))
                 .build(),
         }
     }

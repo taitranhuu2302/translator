@@ -1,4 +1,4 @@
-//! The Translator engine and the ports the platform must satisfy.
+//! The Neris engine and the ports the platform must satisfy.
 //!
 //! Nothing here may depend on AppKit, Tauri or any other macOS crate: this crate
 //! is the cross-platform promise the v1 spec makes, and it is tested with `cargo test`

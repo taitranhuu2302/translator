@@ -19,10 +19,10 @@ import {
 export const MOCK_SETTINGS: Settings = {
   language_pair: { target: "vi", partner: "en" },
   shortcuts: {
-    quick_translate: "Ctrl+Alt+E",
+    quick_translate: "Ctrl+Alt+D",
     replace: "Ctrl+Alt+R",
     read_aloud: "Ctrl+Alt+S",
-    translate_window: "Ctrl+Alt+W",
+    translate_window: "Ctrl+Alt+E",
   },
   start_at_login: true,
   azure_region: "",

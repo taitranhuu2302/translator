@@ -169,7 +169,7 @@ pub fn problem_message(plan: &Plan) -> Option<String> {
 /// What macOS refusing a registration says. It never claims to know the owner:
 /// Carbon reports the conflict but not which app holds the combination.
 pub fn refused_message(binding: &str) -> String {
-    format!("macOS would not give Translator {binding}. Another app may already be using it.")
+    format!("macOS would not give Neris {binding}. Another app may already be using it.")
 }
 
 /// Why a stored binding was not live at launch: the parser refused the stored
@@ -292,12 +292,12 @@ pub fn register_binding(app: &AppHandle, binding: &str) -> Option<Shortcut> {
         Ok(shortcut) => match register_on_main_thread(app, shortcut) {
             Ok(()) => Some(shortcut),
             Err(error) => {
-                eprintln!("Translator: could not register {binding}: {error}");
+                eprintln!("Neris: could not register {binding}: {error}");
                 None
             }
         },
         Err(error) => {
-            eprintln!("Translator: invalid shortcut binding {binding}: {error}");
+            eprintln!("Neris: invalid shortcut binding {binding}: {error}");
             None
         }
     }
@@ -532,7 +532,7 @@ mod tests {
     fn a_refused_registration_never_names_an_owner() {
         assert_eq!(
             refused_message("Cmd+Shift+K"),
-            "macOS would not give Translator Cmd+Shift+K. Another app may already be using it."
+            "macOS would not give Neris Cmd+Shift+K. Another app may already be using it."
         );
     }
 
@@ -587,7 +587,7 @@ mod tests {
         assert_eq!(launch_problem("Ctrl+Alt+Banana"), INVALID_BINDING);
         assert_eq!(
             launch_problem("Cmd+Shift+K"),
-            "macOS would not give Translator Cmd+Shift+K. Another app may already be using it."
+            "macOS would not give Neris Cmd+Shift+K. Another app may already be using it."
         );
     }
 

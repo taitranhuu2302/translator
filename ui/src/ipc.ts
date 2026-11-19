@@ -284,7 +284,7 @@ export const ipc = {
   resetShortcutsAndLanguagePair: (): Promise<ResetOutcome> =>
     call("reset_shortcuts_and_language_pair"),
 
-  /** The shortcuts macOS refused when Translator started. Each stays until that
+  /** The shortcuts macOS refused when Neris started. Each stays until that
    * action is rebound or the shortcuts are reset. */
   shortcutConflicts: (): Promise<ShortcutStatus[]> =>
     call("shortcut_conflicts"),

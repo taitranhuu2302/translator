@@ -24,7 +24,7 @@ use crate::shortcuts::{
 };
 use crate::AppState;
 
-/// The login item macOS launches Translator from. Reading and changing it are
+/// The login item macOS launches Neris from. Reading and changing it are
 /// separate so a failed change never has to be inferred from a boolean.
 pub trait LoginItem {
     fn is_enabled(&self) -> Result<bool, String>;
@@ -91,7 +91,7 @@ pub fn replace(
         if let Err(problem) = panel.hide() {
             // A popup that stays up must not stop the Replace; it is worth a
             // line because the clipboard fallback would paste into it.
-            eprintln!("Translator: the popup was not hidden before Replace: {problem}");
+            eprintln!("Neris: the popup was not hidden before Replace: {problem}");
         }
     }
     match replace() {
@@ -129,7 +129,7 @@ pub fn set_start_at_login(
     let mut settings = match settings_store.load() {
         Ok(settings) => settings,
         Err(error) => {
-            eprintln!("Translator: the login item was not changed: {error}");
+            eprintln!("Neris: the login item was not changed: {error}");
             return StartAtLoginOutcome {
                 enabled: login_item.is_enabled().unwrap_or(false),
                 settings: Settings::default(),
@@ -142,18 +142,18 @@ pub fn set_start_at_login(
     };
     let previous = settings.start_at_login;
     if let Err(error) = login_item.set_enabled(enabled) {
-        eprintln!("Translator: the login item was not changed: {error}");
+        eprintln!("Neris: the login item was not changed: {error}");
         return StartAtLoginOutcome {
             enabled: login_item.is_enabled().unwrap_or(settings.start_at_login),
             settings,
             problem: Some(
-                "Translator could not change the login item; it was left as it was.".to_owned(),
+                "Neris could not change the login item; it was left as it was.".to_owned(),
             ),
         };
     }
     settings.start_at_login = enabled;
     if let Err(error) = settings_store.save(&settings) {
-        eprintln!("Translator: the login item change could not be saved: {error}");
+        eprintln!("Neris: the login item change could not be saved: {error}");
         // Put back whatever the file still says, which is the value loaded
         // above, not simply the opposite of the requested one.
         let problem = match login_item.set_enabled(previous) {
@@ -222,7 +222,7 @@ pub fn apply_shortcut(
 
     // 1. Register the new combination. A refusal changes nothing.
     if let Err(error) = registry.register(shortcut) {
-        eprintln!("Translator: could not register {binding}: {error}");
+        eprintln!("Neris: could not register {binding}: {error}");
         return ShortcutApplyOutcome {
             binding: binding.clone(),
             problem: Some(shortcuts::refused_message(&binding)),
@@ -236,7 +236,7 @@ pub fn apply_shortcut(
     if let Some(old) = old.filter(|old| !shortcuts::is_the_same(old, &shortcut)) {
         if let Err(error) = registry.unregister(old) {
             eprintln!(
-                "Translator: {} was not unregistered: {error}",
+                "Neris: {} was not unregistered: {error}",
                 shortcuts::binding_string(old)
             );
         }
@@ -249,10 +249,10 @@ pub fn apply_shortcut(
     let mut next = settings.clone();
     action.with_binding(&mut next.shortcuts, binding.clone());
     if let Err(error) = settings_store.save(&next) {
-        eprintln!("Translator: the shortcut change could not be saved: {error}");
+        eprintln!("Neris: the shortcut change could not be saved: {error}");
         if let Err(error) = registry.unregister(shortcut) {
             eprintln!(
-                "Translator: {} was not unregistered: {error}",
+                "Neris: {} was not unregistered: {error}",
                 shortcuts::binding_string(shortcut)
             );
         }
@@ -287,7 +287,7 @@ pub fn rebind_shortcut(
     requested: &str,
 ) -> Result<ShortcutApplyOutcome, ()> {
     let settings = settings_store.load().map_err(|error| {
-        eprintln!("Translator: the shortcut change could not read the settings: {error}");
+        eprintln!("Neris: the shortcut change could not read the settings: {error}");
     })?;
     let plan = shortcuts::plan(action, requested, &settings.shortcuts);
     if let Some(problem) = shortcuts::problem_message(&plan) {
@@ -357,7 +357,7 @@ pub fn reset_shortcuts(
 ) -> Result<ResetOutcome, ()> {
     let current = settings_store.load().map_err(|error| {
         eprintln!(
-            "Translator: the shortcuts could not be reset: the settings file could not be read: {error}"
+            "Neris: the shortcuts could not be reset: the settings file could not be read: {error}"
         );
     })?;
 
@@ -365,7 +365,7 @@ pub fn reset_shortcuts(
         if let Some(live) = route.live(action) {
             if let Err(error) = registry.unregister(live) {
                 eprintln!(
-                    "Translator: {} was not unregistered: {error}",
+                    "Neris: {} was not unregistered: {error}",
                     shortcuts::binding_string(live)
                 );
             }
@@ -794,7 +794,7 @@ mod tests {
         assert_eq!(outcome.settings, preference(false));
         assert_eq!(
             outcome.problem.as_deref(),
-            Some("Translator could not change the login item; it was left as it was.")
+            Some("Neris could not change the login item; it was left as it was.")
         );
         assert_eq!(login_item.enabled.get(), false);
         assert_eq!(settings.current(), preference(false));
@@ -1114,7 +1114,7 @@ mod tests {
         assert_eq!(outcome.binding, "Ctrl+Alt+M");
         assert_eq!(
             outcome.problem.as_deref(),
-            Some("macOS would not give Translator Ctrl+Alt+M. Another app may already be using it.")
+            Some("macOS would not give Neris Ctrl+Alt+M. Another app may already be using it.")
         );
         assert!(!outcome.applied);
         assert_eq!(outcome.settings, Settings::default());
@@ -1335,7 +1335,7 @@ mod tests {
         assert_eq!(
             replace.problem.as_deref(),
             Some(
-                "macOS would not give Translator Ctrl+Alt+R. Another app may already be using it."
+                "macOS would not give Neris Ctrl+Alt+R. Another app may already be using it."
             )
         );
         assert_eq!(

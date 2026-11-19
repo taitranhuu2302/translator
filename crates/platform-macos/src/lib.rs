@@ -14,6 +14,7 @@ mod capture;
 pub mod clipboard;
 mod credentials;
 mod history;
+mod migration;
 pub mod pointer;
 mod settings_file;
 #[cfg(target_os = "macos")]
@@ -23,6 +24,7 @@ mod speech;
 mod speech;
 
 pub use history::MacHistoryStore;
+pub use migration::{migrate_legacy_state, MigrationError, MigrationOutcome};
 pub use settings_file::MacSettingsStore;
 
 use translator_core::{

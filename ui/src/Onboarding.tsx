@@ -1,6 +1,7 @@
 import { CheckCircle2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { NerisMark } from "@/components/NerisMark";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -101,9 +102,10 @@ export function Onboarding({
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="sm:max-w-md" showCloseButton={false}>
         <DialogHeader>
-          <DialogTitle>Welcome to Translator</DialogTitle>
+          <NerisMark className="mb-1 h-10 w-10 text-primary" />
+          <DialogTitle>Welcome to Neris</DialogTitle>
           <DialogDescription>
-            Translator lives in the menu bar and works on whatever you select in
+            Neris lives in the menu bar and works on whatever you select in
             another app. Select text anywhere, then use one of these.
           </DialogDescription>
         </DialogHeader>

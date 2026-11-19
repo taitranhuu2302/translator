@@ -431,7 +431,7 @@ fn record_translation(
         corrected: None,
     };
     if let Err(error) = history.record(&entry) {
-        eprintln!("Translator: the translation was not recorded in history: {error}");
+        eprintln!("Neris: the translation was not recorded in history: {error}");
     }
 }
 
@@ -450,7 +450,7 @@ fn record_improvement(history: &dyn HistoryStore, source: &str, improvement: &Im
         corrected: Some(improvement.corrected.clone()),
     };
     if let Err(error) = history.record(&entry) {
-        eprintln!("Translator: the improvement was not recorded in history: {error}");
+        eprintln!("Neris: the improvement was not recorded in history: {error}");
     }
 }
 

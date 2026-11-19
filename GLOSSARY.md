@@ -1,4 +1,4 @@
-# Translator
+# Neris
 
 A macOS desktop translator that works on text selected in any app, and a window for translating and improving sentences.
 

@@ -67,9 +67,9 @@ const BETTER =
 const NOTICES: Notice[] = [
   {
     kind: "capture",
-    title: "Translator needs Accessibility to read your selection.",
+    title: "Neris needs Accessibility to read your selection.",
     detail:
-      "Open System Settings → Privacy & Security → Accessibility, enable Translator, then press the shortcut again.",
+      "Open System Settings → Privacy & Security → Accessibility, enable Neris, then press the shortcut again.",
     action: {
       id: "open_accessibility_settings",
       label: "Open System Settings",
@@ -84,7 +84,7 @@ const NOTICES: Notice[] = [
   {
     kind: "offline",
     title: "You appear to be offline.",
-    detail: "Translator needs a network connection. Reconnect, then try again.",
+    detail: "Neris needs a network connection. Reconnect, then try again.",
   },
   {
     kind: "provider",
