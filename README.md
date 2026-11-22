@@ -96,6 +96,8 @@ Both `scripts/build.sh` and the release workflow delegate to `scripts/package.sh
 
 A release is a tag on `main`: bump the version with `./scripts/set-version.sh X.Y.Z`, push `vX.Y.Z`, and the workflow verifies the tag, re-runs the suite, builds, signs and opens a draft. The secrets, the update key and the publishing step are in [docs/release.md](docs/release.md). See [ADR-0010](docs/adr/0010-tag-driven-release-from-github.md).
 
+The Windows workflow builds an unsigned, per-user `Neris_<version>_x64-setup.exe` on demand or on a tag, and leaves it as an artifact of that run — it is never attached to a release. The app inside it still does not work on Windows: only the build is done, the port is not ([.scratch/windows-build/spec.md](.scratch/windows-build/spec.md), [.scratch/windows-port/spec.md](.scratch/windows-port/spec.md)).
+
 ## Develop
 
 ```bash
@@ -121,6 +123,7 @@ The app is now Neris and its bundle identifier changed, which macOS keys the Acc
 - [.scratch/architecture-deepening/spec.md](.scratch/architecture-deepening/spec.md) — the consolidation effort: one home per rule
 - [.scratch/ui-redesign/spec.md](.scratch/ui-redesign/spec.md) — the design system effort: Tailwind, shadcn and the Neris palette
 - [.scratch/release-pipeline/spec.md](.scratch/release-pipeline/spec.md) — CI, tag-driven releases and in-app updates
+- [.scratch/windows-build/spec.md](.scratch/windows-build/spec.md) — the Windows build: compile gate, NSIS installer, and the slice of the port that made it possible
 - [.scratch/windows-port/spec.md](.scratch/windows-port/spec.md) — the Windows contract: artifact, manifest key, installer and CI job
 - [.claude/skills/neris-ui/SKILL.md](.claude/skills/neris-ui/SKILL.md) — the UI conventions a later change has to follow
 

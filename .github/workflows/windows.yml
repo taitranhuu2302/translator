@@ -1,0 +1,61 @@
+name: Windows installer
+
+# A build, not a release: the `.exe` exists on the run for someone to install,
+# and is never attached to a GitHub Release (`.scratch/windows-build/spec.md`).
+# The shell's compilation is already gated on every push and pull request in
+# `ci.yml`; packaging a release binary is asked for, or rides a tag. The
+# installer is unsigned and per-user, and the app it wraps does not run on
+# Windows yet — the port is `.scratch/windows-port/spec.md`.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  installer:
+    name: Build the NSIS installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install the workspace
+        run: npm ci --no-audit --no-fund
+
+      # `frontendDist` is embedded, not loaded from a dev server, so the real
+      # frontend has to exist before the Rust build reads it.
+      - name: Build the frontend
+        run: npm run build
+
+      # NSIS, per-user, WebView2 bootstrapper and the `.ico` all come from
+      # `crates/app/tauri.windows.conf.json`; `tauri.conf.json` stays untouched
+      # so the hand-rolled macOS bundle (ADR-0010) is unaffected.
+      - name: Build the installer
+        run: npx tauri build --bundles nsis
+
+      - name: Read the version
+        id: version
+        shell: bash
+        run: echo "version=$(./scripts/version.sh)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neris-${{ steps.version.outputs.version }}-windows-x64
+          path: target/release/bundle/nsis/*.exe
+          if-no-files-found: error

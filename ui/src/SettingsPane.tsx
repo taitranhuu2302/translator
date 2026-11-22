@@ -69,6 +69,7 @@ export function SettingsPane({
     Partial<Record<ShortcutAction, string>>
   >({});
   const [pairNotice, setPairNotice] = useState<string | null>(null);
+  const [historyNotice, setHistoryNotice] = useState<string | null>(null);
   const [resetNotice, setResetNotice] = useState<string | null>(null);
   const [resetProblems, setResetProblems] = useState<string[]>([]);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -129,6 +130,27 @@ export function SettingsPane({
       } catch {
         // The actual state stays unknown; the switch keeps its last value.
       }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // History recording changes only what future results do: entries already
+  // stored stay readable, so this is a plain settings write, not a purge.
+  const saveHistory = async (enabled: boolean) => {
+    setBusy(true);
+    setHistoryNotice(null);
+    try {
+      const outcome = await settingsWriter.change({
+        kind: "save_history",
+        enabled,
+      });
+      if (outcome.mirror === null) {
+        setHistoryNotice(outcome.problem);
+        return;
+      }
+      onSettingsSaved(outcome.mirror.settings);
+      setHistoryNotice(outcome.notice);
     } finally {
       setBusy(false);
     }
@@ -298,6 +320,29 @@ export function SettingsPane({
           <p className="text-xs text-destructive" role="alert">
             {loginProblem}
           </p>
+        ) : null}
+      </Section>
+
+      <Section title="History">
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor="save-history" className="font-normal">
+            Save translations to History
+          </Label>
+          <Switch
+            id="save-history"
+            checked={settings.save_history}
+            disabled={busy}
+            onCheckedChange={(checked) => {
+              void saveHistory(checked);
+            }}
+          />
+        </div>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Off by default. Entries already saved stay on this Mac and can still be
+          opened from History.
+        </p>
+        {historyNotice ? (
+          <p className="text-xs text-muted-foreground">{historyNotice}</p>
         ) : null}
       </Section>
 

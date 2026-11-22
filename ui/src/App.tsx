@@ -31,6 +31,7 @@ import { performNoticeAction } from "./noticeActions";
 import { CaptureNoticeView, NoticeView } from "./NoticeView";
 import { Onboarding } from "./Onboarding";
 import {
+  effectiveDirection,
   EMPTY_RESULT,
   reduceResult,
   swapDirection,
@@ -76,6 +77,14 @@ export function App() {
   const [result, setResult] = useState<TranslateResult>(EMPTY_RESULT);
   const [direction, setDirection] = useState<Direction | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // The direction the next Translate would run in, as the local Detection reads
+  // the text being typed. It only labels the Source pane: submitting resolves
+  // the direction again in the engine.
+  const [detectedDirection, setDetectedDirection] = useState<Direction | null>(
+    null,
+  );
+  const detection = useRef(0);
 
   // Improve keeps its own pane: two labelled parts that fill in as the model
   // writes. `copiedPart` says which section's Copy was last used.
@@ -204,13 +213,9 @@ export function App() {
     // A Swap applies only to the text it produced; carrying it across an edit
     // would translate somewhere the user did not ask for.
     setDirection(null);
-    // Emptying the input clears both panes and abandons any answer still in
-    // flight, so neither pane can show a result for text that is gone. The
-    // cleared pane holds no token, so a late answer cannot fill it.
-    if (value.trim().length === 0) {
-      setResult((state) => reduceResult(state, { type: "cleared" }));
-      setImprovement((state) => reduceImprovement(state, { type: "cleared" }));
-    }
+    // Emptying the input leaves both panes as they are: a result stays readable
+    // until the next submit. Submitting empty text is what clears the pane, and
+    // it clears only the pane of the mode that was submitted.
   };
 
   // Switching between the two working modes keeps an in-flight stream alive in
@@ -222,6 +227,26 @@ export function App() {
     setCopied(false);
     setCopiedPart(null);
   };
+
+  // The Source pane's live label. Every keystroke issues a new Detection and
+  // retires the answer still in flight, so an older guess can never overwrite a
+  // newer one. Improve has no direction, and before the settings arrive there is
+  // no pair to read the text against.
+  useEffect(() => {
+    const attempt = ++detection.current;
+    if (mode !== "translate" || !settings || text.trim().length === 0) {
+      setDetectedDirection(null);
+      return;
+    }
+    ipc
+      .detectDirection(text, settings.language_pair)
+      .then((direction) => {
+        if (attempt === detection.current) setDetectedDirection(direction);
+      })
+      .catch(() => {
+        if (attempt === detection.current) setDetectedDirection(null);
+      });
+  }, [mode, settings, text]);
 
   const openHistory = () => {
     setHistoryOpen(true);
@@ -426,6 +451,7 @@ export function App() {
   };
 
   const canSwap = result.phase === "translated";
+  const liveDirection = effectiveDirection(direction, detectedDirection);
 
   return (
     <AppShell
@@ -457,6 +483,7 @@ export function App() {
         onTextChange={changeText}
         onSubmit={translate}
         result={result}
+        liveDirection={liveDirection}
         improvement={improvement}
         copied={copied}
         copiedPart={copiedPart}

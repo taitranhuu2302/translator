@@ -77,6 +77,7 @@ impl TranslatorEngine {
         )?;
         record_translation(
             self.history.as_ref(),
+            settings.save_history,
             &selection.text,
             &translation,
             direction,
@@ -116,6 +117,7 @@ impl TranslatorEngine {
         self.capture.replace_selection(&translation.text)?;
         record_translation(
             self.history.as_ref(),
+            settings.save_history,
             &selection.text,
             &translation,
             direction,
@@ -223,7 +225,7 @@ impl TranslatorEngine {
 
     /// The same translation, optionally in a direction the caller chose for this
     /// request. The Translate Window's Swap passes one so the reversed direction
-    /// applies to that window only: an override neither reads nor writes the
+    /// applies to that window only: an override is never written back to the
     /// saved Language Pair. Everything else — the provider ladder, caching and
     /// history — is identical to `translate_text`, so a swap is not a second
     /// translation path.
@@ -241,22 +243,36 @@ impl TranslatorEngine {
         }
         match mode {
             Mode::Translate => {
+                // The saved settings answer two things here: the pair used when
+                // the caller chose no direction, and whether this result is
+                // recorded.
+                let settings = self.settings.load()?;
                 let (translation, direction) = match direction {
                     Some(direction) => (
                         translate_in_direction(self.provider.as_ref(), text, direction.clone())?,
                         direction,
                     ),
                     None => {
-                        let settings = self.settings.load()?;
                         resolve_translation(self.provider.as_ref(), text, &settings.language_pair)?
                     }
                 };
-                record_translation(self.history.as_ref(), text, &translation, direction);
+                record_translation(
+                    self.history.as_ref(),
+                    settings.save_history,
+                    text,
+                    &translation,
+                    direction,
+                );
                 Ok(TextOutcome::Translation(translation))
             }
             Mode::Improve => {
                 let improvement = improve_with(self.provider.as_ref(), text)?;
-                record_improvement(self.history.as_ref(), text, &improvement);
+                // History is best-effort: a preference that cannot be read
+                // records nothing rather than failing an improvement that has
+                // already finished.
+                if self.records_history() {
+                    record_improvement(self.history.as_ref(), text, &improvement);
+                }
                 Ok(TextOutcome::Improvement(improvement))
             }
         }
@@ -285,7 +301,9 @@ impl TranslatorEngine {
             },
             sink,
         )?;
-        record_improvement(self.history.as_ref(), text, &improvement);
+        if self.records_history() {
+            record_improvement(self.history.as_ref(), text, &improvement);
+        }
         Ok(improvement)
     }
 
@@ -333,6 +351,16 @@ impl TranslatorEngine {
 
     pub fn save_settings(&self, settings: Settings) -> Result<(), EngineError> {
         Ok(self.settings.save(&settings)?)
+    }
+
+    /// Whether finished results should be written to History. History is
+    /// best-effort, so a settings file that cannot be read records nothing
+    /// rather than failing work that already succeeded.
+    fn records_history(&self) -> bool {
+        self.settings
+            .load()
+            .map(|settings| settings.save_history)
+            .unwrap_or(false)
     }
 
     /// Dismiss the first-launch onboarding for good, and answer the settings the
@@ -445,16 +473,22 @@ fn translate_in_direction(
     })
 }
 
-/// Recording history is best-effort: a rejected write is logged, never turned
-/// into a failed translation. Every translation records the direction it was
-/// produced in — the pair's resolution for the normal paths, the direction the
-/// window chose for a Swap — so reopening never has to guess.
+/// Recording history is best-effort and only happens when the user has left it
+/// on: a rejected write is logged, never turned into a failed translation, and
+/// with `save_history` off nothing is written at all. Every translation records
+/// the direction it was produced in — the pair's resolution for the normal
+/// paths, the direction the window chose for a Swap — so reopening never has to
+/// guess.
 fn record_translation(
     history: &dyn HistoryStore,
+    save_history: bool,
     source: &str,
     translation: &Translation,
     direction: Direction,
 ) {
+    if !save_history {
+        return;
+    }
     let entry = HistoryEntry {
         source: source.to_owned(),
         result: translation.text.clone(),

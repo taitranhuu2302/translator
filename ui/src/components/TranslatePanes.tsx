@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { providerLabel } from "../format";
 import { partLabel, type ImproveResult } from "../improveWindow";
 import { directionLabel } from "../languageLabel";
-import type { ImprovePart, Mode } from "../ipc";
+import type { Direction, ImprovePart, Mode } from "../ipc";
 import { NoticeView } from "../NoticeView";
 import type { TranslateResult } from "../translateWindow";
 import { EmptyState } from "./EmptyState";
@@ -35,6 +35,7 @@ export function TranslatePanes({
   onTextChange,
   onSubmit,
   result,
+  liveDirection,
   improvement,
   copied,
   copiedPart,
@@ -49,6 +50,9 @@ export function TranslatePanes({
   onTextChange: (value: string) => void;
   onSubmit: () => void;
   result: TranslateResult;
+  /** The direction the next Translate would run in, or null when the text has
+   * no guess to show. It labels the Source pane and decides nothing. */
+  liveDirection: Direction | null;
   improvement: ImproveResult;
   copied: boolean;
   copiedPart: ImprovePart | null;
@@ -73,8 +77,17 @@ export function TranslatePanes({
     <div className="grid min-h-0 flex-1 grid-cols-2 gap-4 p-4">
       <section className="@container flex min-h-0 flex-col overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm transition-[border-color,box-shadow] focus-within:border-ring/50 focus-within:ring-3 focus-within:ring-ring/15">
         <PaneHeader label="Source">
+          {/* The live Detection. It sits in the header, not in an aria-live
+              region: it changes with every keystroke and is advice, not an
+              announcement. An em dash is the honest answer when the guess has
+              nothing to name. */}
+          {isImprove ? null : (
+            <span className="ml-auto min-w-0 truncate rounded-full bg-muted/70 px-2 py-0.5 text-[0.625rem] text-muted-foreground">
+              {liveDirection ? directionLabel(liveDirection) : "—"}
+            </span>
+          )}
           {text.length > 0 ? (
-            <span className="text-[0.6875rem] tabular-nums text-muted-foreground/80">
+            <span className="shrink-0 text-[0.6875rem] tabular-nums text-muted-foreground/80">
               {text.length} characters
             </span>
           ) : null}

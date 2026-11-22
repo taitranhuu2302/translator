@@ -23,6 +23,7 @@ import type { AnswerToken } from "../answerToken";
 import { ReplaceHudCard } from "../HudView";
 import { EMPTY_IMPROVEMENT, type ImproveResult } from "../improveWindow";
 import type {
+  Direction,
   HistoryEntry,
   ImprovePart,
   Mode,
@@ -238,6 +239,22 @@ function sourceFor(scene: Scene): string {
   }
 }
 
+/** The preview has no engine, so the live label is read here by the same two
+ * cues ADR-0008 names. A scene whose text has neither cue shows the em dash. */
+function liveDirectionFor(scene: Scene): Direction | null {
+  if (scene.mode === "improve") return null;
+  const text = sourceFor(scene);
+  if (text.length === 0) return null;
+  if (
+    /[ăâđêôơưĂÂĐÊÔƠƯàáảãạầấẩẫậằắẳẵặèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ]/u.test(
+      text,
+    )
+  ) {
+    return { source: "vi", target: "en" };
+  }
+  return { source: "en", target: "vi" };
+}
+
 /** The scene's id is kept in the URL hash, so any state can be linked to and
  * reloaded without hunting through the picker. */
 function sceneFromHash(): string {
@@ -293,6 +310,7 @@ export function PreviewApp() {
               onTextChange={() => undefined}
               onSubmit={() => undefined}
               result={resultFor(scene)}
+              liveDirection={liveDirectionFor(scene)}
               improvement={improvementFor(scene)}
               copied={false}
               copiedPart={null}

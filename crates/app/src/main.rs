@@ -3,13 +3,25 @@
 //! implementation directly.
 
 mod frame;
+// AppKit panels: `hud` and `panel` are NSPanel code end to end. Everywhere else
+// the same surface is provided by the `_unsupported` files, so no call site
+// needs a `cfg` of its own.
+#[cfg(target_os = "macos")]
 mod hud;
 mod main_thread;
+#[cfg(target_os = "macos")]
 mod panel;
 mod shortcuts;
 mod tray;
 mod updates;
 mod workflows;
+
+#[cfg(not(target_os = "macos"))]
+#[path = "hud_unsupported.rs"]
+mod hud;
+#[cfg(not(target_os = "macos"))]
+#[path = "panel_unsupported.rs"]
+mod panel;
 
 use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -23,10 +35,10 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 use translator_core::{
     AzureProvider, CachedProvider, CaptureError, Direction, EngineError, GroqProvider,
-    HistoryEntry, ImproveDelta, ImprovePart, Mode, MyMemoryProvider, PopupPrefill, ProviderId,
-    ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud, ReplacePhase, Replacement,
-    Selection, Settings, SettingsStore, ShortcutBindings, SpeechError, TextOutcome, Translation,
-    TranslatorEngine, UreqHttpClient,
+    HistoryEntry, ImproveDelta, ImprovePart, Language, LanguagePair, Mode, MyMemoryProvider,
+    PopupPrefill, ProviderId, ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud,
+    ReplacePhase, Replacement, Selection, Settings, SettingsStore, ShortcutBindings, SpeechError,
+    TextOutcome, Translation, TranslatorEngine, UreqHttpClient,
 };
 use translator_platform_macos::{
     clipboard, migrate_legacy_state, MacCredentialStore, MacHistoryStore, MacSelectionCapture,
@@ -306,6 +318,19 @@ async fn translate_text(
     direction: Option<Direction>,
 ) -> Result<TextOutcome, EngineError> {
     state.engine.translate_text_in(&text, mode, direction)
+}
+
+/// The Direction a translation of `text` would run in, so the Translate Window
+/// can name it while the text is still being typed. It is a label, never an
+/// instruction: submitting resolves the direction again in the engine.
+///
+/// The pair comes from the view's loaded settings, so this reads no disk, calls
+/// no provider and writes nothing. `None` means the local guess could not name a
+/// language; the translation would still run from the pair's partner, but there
+/// is no Detection to show.
+#[tauri::command]
+async fn detect_direction(text: String, target: Language, partner: Language) -> Option<Direction> {
+    LanguagePair::new(target, partner).detected_direction_for(&text)
 }
 
 /// The Translate Window's Improve mode: corrected and better, streamed into the
@@ -953,11 +978,14 @@ fn build_tray(app: &AppHandle, bindings: &ShortcutBindings, granted: bool) -> ta
     // so it stays legible in both appearances. It is drawn at 18 pt, and the
     // file is 72 px — four pixels per point for a Retina menu bar to sample.
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png"))?;
-    TrayIconBuilder::with_id(tray::TRAY_ID)
+    let tray = TrayIconBuilder::with_id(tray::TRAY_ID)
         .tooltip("Neris")
-        .icon(icon)
-        .icon_as_template(true)
-        .menu(&menu)
+        .icon(icon);
+    // Only AppKit has template images; elsewhere the icon is drawn as-is. A
+    // Windows tray icon is part of the port, not of this build.
+    #[cfg(target_os = "macos")]
+    let tray = tray.icon_as_template(true);
+    tray.menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| handle_tray_event(app, event.id().as_ref()))
         .build(app)?;
@@ -1020,14 +1048,16 @@ fn main() {
         credentials,
     );
 
+    // macOS starts the login item through a LaunchAgent; the other targets use
+    // the plugin's default registration, and the `macos_launcher` method does
+    // not exist there.
+    let autostart = tauri_plugin_autostart::Builder::new();
+    #[cfg(target_os = "macos")]
+    let autostart = autostart.macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent);
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(
-            tauri_plugin_autostart::Builder::new()
-                .macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent)
-                .build(),
-        )
-        .plugin(tauri_nspanel::init())
+        .plugin(autostart.build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -1040,6 +1070,10 @@ fn main() {
                 })
                 .build(),
         );
+    // The panel plugin is what turns the popup and the HUD into NSPanels, so it
+    // is registered exactly where those modules are compiled.
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
     // Release builds only: without it the app reports updates as disabled and
     // can never replace itself (crates/app/Cargo.toml's `updater` feature).
     #[cfg(feature = "updater")]
@@ -1063,6 +1097,7 @@ fn main() {
             replace_with_translation,
             read_aloud,
             translate_text,
+            detect_direction,
             improve_text,
             provider_status,
             save_provider_key,
@@ -1092,6 +1127,8 @@ fn main() {
         ])
         .setup(|app| {
             // Menu-bar only: the app never takes a Dock icon or a place in ⌘Tab.
+            // `ActivationPolicy` is AppKit's; no other target has the concept.
+            #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let settings = app.state::<AppState>().engine.settings();

@@ -105,7 +105,7 @@ Underneath, the product logic moves into a Rust core with no platform dependency
 
 **Improve contract.** Improve asks for exactly two labelled parts: a corrected sentence that preserves the author's meaning and register, and a better sentence that is more natural or concise. Both are returned as separate fields, never as prose the view has to parse, and malformed model output is a typed error rather than a blank pane.
 
-**Storage.** API keys in the Keychain, one item per provider. History in SQLite under Application Support, holding both sides of every translation, the provider, the mode, and a timestamp; rows older than 30 days are purged at launch and once a day. The Language Pair, shortcut bindings and the start-at-login preference live in a local settings file that is not synced.
+**Storage.** API keys in the Keychain, one item per provider. History in SQLite under Application Support, holding both sides of every translation, the provider, the mode, and a timestamp; rows older than 30 days are purged at launch and once a day. Recording is off by default and can be turned on in Settings; turning it off stops new rows only, and entries already written stay readable until they age out. The Language Pair, shortcut bindings, the start-at-login preference and the history preference live in a local settings file that is not synced.
 
 **Shortcuts.** `⌥⇧D`, `⌥⇧R`, `⌥⇧S`, `⌥⇧E`, registered through Carbon so that no Input Monitoring permission is needed. Bindings are user-editable and persisted; a binding that cannot be registered surfaces a conflict rather than failing silently.
 

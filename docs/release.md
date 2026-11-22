@@ -91,6 +91,24 @@ the release assets to be readable without credentials.
 6. Edit the notes if the generated ones are thin, then **publish** the release.
    Until you publish, no app sees it.
 
+## The Windows installer
+
+`.github/workflows/windows.yml` builds `Neris_<version>_x64-setup.exe` on
+`windows-latest`. Run it by hand (Actions → *Windows installer* → Run workflow)
+or let a `vX.Y.Z` tag trigger it. Nothing is attached to a release and
+`latest.json` gains no Windows entry: the `.exe` is an artifact of that run.
+
+What it is: NSIS, per-user (no UAC prompt), unsigned, 64-bit, WebView2 via the
+download bootstrapper. What it is not: a working Windows app. The shell compiles
+and opens, but selection capture, speech, clipboard, credentials and the
+non-activating panels are macOS-only until the port lands
+(`.scratch/windows-port/spec.md`). Install, open and remove it with
+`.scratch/windows-build/checks/windows-install.md`.
+
+The decisions behind it — including why it is not signed and why the Tauri
+bundler is used here but not on macOS — are in
+`.scratch/windows-build/spec.md`.
+
 ## When something goes wrong
 
 - **A tag with the wrong version**: delete the tag (`git tag -d vX.Y.Z && git

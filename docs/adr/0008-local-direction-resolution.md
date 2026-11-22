@@ -10,4 +10,6 @@ The heuristic is deliberately shallow. Unaccented Vietnamese (`toi di hoc`) is i
 
 **Consequences:** the Direction is a value every surface can show, so the Translate Window and the popup name it instead of leaving the user to infer it. `Translation` carries the language it ran from, and Swap reverses that value rather than guessing again. A future third language must be added to the heuristic and to `OFFERED_LANGUAGES` together.
 
+**Later addition:** the Translate Window also shows the Detection while the text is still being typed. It calls a `detect_direction` command, which wraps `LanguagePair::detected_direction_for` with the Language Pair the view already holds, and labels the Source pane. The label is advice only: submitting resolves the Direction again through `direction_for`, so a live reading can never send text somewhere a submitted translation would not. Text the guess cannot name shows an em dash rather than a fallback direction. This adds no second source of truth and changes nothing about providers.
+
 This supersedes the sentence in `.scratch/translator-v1/spec.md` that said detection uses the provider's reported language when available.

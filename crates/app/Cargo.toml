@@ -33,4 +33,9 @@ translator-platform-macos = { workspace = true }
 tauri-plugin-dialog = "2"
 tauri-plugin-autostart = "2.7"
 tauri-plugin-updater = { version = "2", optional = true }
+
+# AppKit panels only exist on macOS. The crate imports `objc2` unconditionally,
+# so it cannot even be compiled elsewhere; the shell's `panel` and `hud` modules
+# are gated with it (`src/panel_unsupported.rs`, `src/hud_unsupported.rs`).
+[target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = "2.1"
