@@ -96,7 +96,7 @@ Both `scripts/build.sh` and the release workflow delegate to `scripts/package.sh
 
 A release is a tag on `main`: bump the version with `./scripts/set-version.sh X.Y.Z`, push `vX.Y.Z`, and the workflow verifies the tag, re-runs the suite, builds, signs and opens a draft. The secrets, the update key and the publishing step are in [docs/release.md](docs/release.md). See [ADR-0010](docs/adr/0010-tag-driven-release-from-github.md).
 
-The Windows workflow builds an unsigned, per-user `Neris_<version>_x64-setup.exe` on demand or on a tag, and leaves it as an artifact of that run — it is never attached to a release. The app inside it still does not work on Windows: only the build is done, the port is not ([.scratch/windows-build/spec.md](.scratch/windows-build/spec.md), [.scratch/windows-port/spec.md](.scratch/windows-port/spec.md)).
+The Windows workflow builds an unsigned, per-user `Neris_<version>_x64-setup.exe` on demand or on a tag and leaves it as an artifact of that run; uploading it to the release is a manual step, first taken for `v0.2.0`. The app inside it still does not work on Windows: only the build is done, the port is not ([.scratch/windows-build/spec.md](.scratch/windows-build/spec.md), [.scratch/windows-port/spec.md](.scratch/windows-port/spec.md)).
 
 ## Develop
 

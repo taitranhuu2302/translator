@@ -95,8 +95,17 @@ the release assets to be readable without credentials.
 
 `.github/workflows/windows.yml` builds `Neris_<version>_x64-setup.exe` on
 `windows-latest`. Run it by hand (Actions → *Windows installer* → Run workflow)
-or let a `vX.Y.Z` tag trigger it. Nothing is attached to a release and
-`latest.json` gains no Windows entry: the `.exe` is an artifact of that run.
+or let a `vX.Y.Z` tag trigger it. The workflow leaves the `.exe` as an artifact
+of that run and **does not attach it to the release**; uploading it is a manual
+step, done once the run is green:
+
+```bash
+gh run download <run-id> -n neris-<version>-windows-x64 --dir /tmp/neris-win
+gh release upload v<version> /tmp/neris-win/neris-<version>-windows-x64/Neris_<version>_x64-setup.exe
+```
+
+`latest.json` gains no Windows entry either way: an installed `.exe` never
+checks for updates.
 
 What it is: NSIS, per-user (no UAC prompt), unsigned, 64-bit, WebView2 via the
 download bootstrapper. What it is not: a working Windows app. The shell compiles

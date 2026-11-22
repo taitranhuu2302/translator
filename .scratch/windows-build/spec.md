@@ -29,7 +29,7 @@ reason is part of the contract.
 
 | # | Decision | Why |
 |---|---|---|
-| 1 | Scope is **build + installer artifact on the workflow run**. Nothing is attached to a release, `latest.json` gains no `windows-x86_64` key, and no updater payload is produced. | An artifact that installs is useful on its own; publishing an unsigned installer from a pipeline nobody has used yet is not. |
+| 1 | Scope is **build + installer**. The workflow leaves `Neris_<ver>_x64-setup.exe` as an artifact of its run; attaching it to a GitHub Release is a **manual step**, done for `v0.2.0` after the pipeline had run green twice. `latest.json` gains no `windows-x86_64` key and no updater payload is produced. | An artifact that installs is useful on its own; publishing an unsigned installer from a pipeline nobody has used yet is not. The workflow does not attach it because a second job racing the draft release is a failure mode nobody has needed yet — automate it when the port makes the `.exe` worth updating. |
 | 2 | The Windows job proves **compilation, the portable tests and the installer**, not runtime correctness. | Runtime correctness is the port (`windows-port/spec.md`). Mixing them would hide which half failed. |
 | 3 | The installer is **unsigned**. No Authenticode, no certificate, no secret. | The spec already records Authenticode as a later decision; the updater's minisign signature, not Authenticode, is what verifies an update. |
 | 4 | **Slice 0 is in scope**: `crates/app` is made to compile on Windows by gating what is macOS-only and adding `icons/icon.ico`. | Without it no installer can exist. It is written down as the port's first slice so the port does not repeat it. |
@@ -44,7 +44,8 @@ reason is part of the contract.
   `#[cfg(not(target_os = "macos"))]` shims beyond the two unsupported modules.
 - `.github/workflows/windows.yml` produces
   `Neris_<version>_x64-setup.exe` as a downloadable artifact on a manual run or
-  a tag.
+  a tag, and the release's page carries the same file once someone uploads it
+  by hand (`v0.2.0` is the first).
 - The installer is per-user (no UAC prompt), 64-bit, and installing, launching
   and uninstalling it is verified by hand on a real Windows machine — see
   `checks/windows-install.md`.
