@@ -42,7 +42,7 @@ jobs:
             --identifier com.taitran.neris.probe "$RUNNER_TEMP/probe"
           echo "codesign before trust exit: $?"
 
-          security find-certificate -c "Translator Local Signing" -p -k "$KC" \
+          security find-certificate -c "Translator Local Signing" -p "$KC" \
             | awk '/BEGIN CERTIFICATE/{n++} n==1' > "$RUNNER_TEMP/id.pem"
           sudo security add-trusted-cert -d -r trustRoot \
             -k /Library/Keychains/System.keychain "$RUNNER_TEMP/id.pem"
