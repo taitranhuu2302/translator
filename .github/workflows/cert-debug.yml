@@ -1,0 +1,39 @@
+name: Cert debug
+
+# Temporary: diagnose why `security import` rejects the release certificate on
+# macos-15. Deleted once the release pipeline works.
+
+on: workflow_dispatch
+
+jobs:
+  debug:
+    runs-on: macos-15
+    steps:
+      - name: Inspect the certificate secret
+        env:
+          CERT_B64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          CERT_PW: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -uo pipefail
+          echo "b64 length: ${#CERT_B64}"
+          printf '%s' "$CERT_B64" > "$RUNNER_TEMP/c.b64"
+          echo "b64 file bytes: $(wc -c < "$RUNNER_TEMP/c.b64" | tr -d ' ')"
+          openssl base64 -d -in "$RUNNER_TEMP/c.b64" -out "$RUNNER_TEMP/c.p12"
+          echo "decode exit: $?"
+          echo "p12 bytes: $(wc -c < "$RUNNER_TEMP/c.p12" | tr -d ' ')"
+          file "$RUNNER_TEMP/c.p12"
+          openssl pkcs12 -info -noout -in "$RUNNER_TEMP/c.p12" \
+            -passin "pass:$CERT_PW" >/dev/null 2>&1
+          echo "pkcs12 readable with password: $?"
+
+          security create-keychain -p "$KEYCHAIN_PW" "$RUNNER_TEMP/d.keychain-db"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$RUNNER_TEMP/d.keychain-db"
+          security import "$RUNNER_TEMP/c.p12" -k "$RUNNER_TEMP/d.keychain-db" \
+            -P "$CERT_PW" -T /usr/bin/codesign
+          echo "import (-T codesign) exit: $?"
+          security import "$RUNNER_TEMP/c.p12" -k "$RUNNER_TEMP/d.keychain-db" \
+            -P "$CERT_PW"
+          echo "import (plain) exit: $?"
+          security show-keychain-info "$RUNNER_TEMP/d.keychain-db"
+          security find-identity -v -p codesigning "$RUNNER_TEMP/d.keychain-db"
