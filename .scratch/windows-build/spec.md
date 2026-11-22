@@ -1,7 +1,9 @@
 # Windows build and installer
 
-Status: ready-for-agent (decided in a grilling session on 2026-11-22; slice 0 of
-the port, see `Blocked by` in each ticket)
+Status: in progress — tickets 01–03 are done and a run has produced the
+installer; 04 (install it on a real machine) is `ready-for-human`. Decided in a
+grilling session on 2026-11-22; slice 0 of the port, see `Blocked by` in each
+ticket.
 
 ## Problem Statement
 

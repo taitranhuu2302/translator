@@ -1,6 +1,6 @@
 # Gate the macOS-only shell code
 
-Status: ready-for-agent
+Status: done
 
 ## What
 
@@ -38,3 +38,15 @@ slice 0 of `windows-port/spec.md`: the port inherits it.
   and login item are all exactly as before.
 - On Windows the app launches and shows its window; the unsupported modules say
   what is missing instead of panicking.
+
+## Result
+
+The five listed blockers were the whole of `crates/app`. The first Windows run
+found a sixth, one crate over: `translator-platform-macos` depended on
+`security-framework` unconditionally, and while that crate empties itself off
+Apple, its dependency `core-foundation` does not — it reaches for `std::os::unix`
+and `libc::PATH_MAX`, so it failed the build before the crate's own `cfg`s were
+read. Moved to `[target.'cfg(target_os = "macos")'.dependencies]`; no source
+change, because every use in `credentials.rs` was already gated. macOS is
+untouched: `cargo fmt --check`, `cargo test -p translator-app` (50) and
+`./scripts/test.sh` all pass.
