@@ -69,5 +69,9 @@ missing from every later release unless someone remembered, so the split is now:
 the release page explains the second download without a hand edit.
 
 The release path has not been run yet — the next `vX.Y.Z` tag is its first
-exercise. The dispatch path was re-run after the extraction to prove the shared
-action still builds the Windows job's file.
+exercise, and the thing to look for is the `.exe` sitting on the draft next to
+the DMG before anyone publishes. The dispatch path was re-run after the
+extraction: run
+[45036725363](https://github.com/taitranhuu2302/translator/actions/runs/45036725363)
+shows the job step as `./.github/actions/build-windows-installer`, finished
+green, and uploaded `neris-0.2.0-windows-x64` (4,315,883 bytes).
