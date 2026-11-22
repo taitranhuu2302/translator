@@ -14,9 +14,7 @@ use crate::ports::{
     HttpClient, HttpMethod, HttpRequest, ImproveRequest, TranslateRequest, TranslationProvider,
 };
 use crate::providers::encode_query_component;
-use crate::providers::failure::{
-    self, FailurePolicy, ServerErrors, ServerFamily, Unrecognised,
-};
+use crate::providers::failure::{self, FailurePolicy, ServerErrors, ServerFamily, Unrecognised};
 
 pub const ENDPOINT: &str = "https://api.mymemory.translated.net/get";
 
@@ -34,10 +32,7 @@ const FAILURES: FailurePolicy = FailurePolicy {
         to: u16::MAX,
     },
     unrecognised: Unrecognised::ReadBody,
-    quota_markers: &[
-        "MYMEMORY WARNING",
-        "USED ALL AVAILABLE FREE TRANSLATIONS",
-    ],
+    quota_markers: &["MYMEMORY WARNING", "USED ALL AVAILABLE FREE TRANSLATIONS"],
 };
 
 /// MyMemory, with an injected HTTP client so tests never open a socket.
@@ -84,10 +79,9 @@ impl TranslationProvider for MyMemoryProvider {
                 detected_source: None,
             });
         }
-        let source = request
-            .source
-            .clone()
-            .ok_or_else(|| FAILURES.malformed("the direction was not resolved before the request"))?;
+        let source = request.source.clone().ok_or_else(|| {
+            FAILURES.malformed("the direction was not resolved before the request")
+        })?;
         let chunks = chunk_text(&request.text, MAX_CHUNK_CHARS);
         let mut translated = Vec::with_capacity(chunks.len());
         for chunk in &chunks {
@@ -132,8 +126,9 @@ fn read_answer(status: u16, body: &str) -> Result<String, ProviderError> {
         return Err(error);
     }
 
-    let envelope: Envelope = serde_json::from_str(body)
-        .map_err(|error| FAILURES.malformed(format!("the body was not the expected JSON: {error}")))?;
+    let envelope: Envelope = serde_json::from_str(body).map_err(|error| {
+        FAILURES.malformed(format!("the body was not the expected JSON: {error}"))
+    })?;
     let details = envelope.response_details;
     let translated = envelope
         .response_data
@@ -185,7 +180,9 @@ fn html_unescape(text: &str) -> String {
             .take(12)
             .find(|(_, character)| *character == ';')
             .map(|(index, _)| index);
-        match entity_end.and_then(|end| decode_entity(&rest[1..end]).map(|character| (end, character))) {
+        match entity_end
+            .and_then(|end| decode_entity(&rest[1..end]).map(|character| (end, character)))
+        {
             Some((end, character)) => {
                 decoded.push(character);
                 rest = &rest[end + 1..];
@@ -210,7 +207,10 @@ fn decode_entity(entity: &str) -> Option<char> {
         "nbsp" => Some('\u{a0}'),
         numeric => {
             let number = numeric.strip_prefix('#')?;
-            let value = match number.strip_prefix('x').or_else(|| number.strip_prefix('X')) {
+            let value = match number
+                .strip_prefix('x')
+                .or_else(|| number.strip_prefix('X'))
+            {
                 Some(hexadecimal) => u32::from_str_radix(hexadecimal, 16).ok()?,
                 None => number.parse::<u32>().ok()?,
             };
@@ -450,8 +450,12 @@ mod tests {
         let requests = http.requests();
         assert_eq!(requests.len(), 2);
         assert!(requests[0].url.contains(&format!("q={}", "a".repeat(500))));
-        assert!(requests[1].url.contains(&format!("q=%20{}", "b".repeat(100))));
-        assert!(requests.iter().all(|request| request.url.ends_with("langpair=vi%7Cen")));
+        assert!(requests[1]
+            .url
+            .contains(&format!("q=%20{}", "b".repeat(100))));
+        assert!(requests
+            .iter()
+            .all(|request| request.url.ends_with("langpair=vi%7Cen")));
     }
 
     #[test]

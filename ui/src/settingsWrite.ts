@@ -26,6 +26,7 @@ export type SettingsMutation =
   | { kind: "rebind"; action: ShortcutAction; binding: string }
   | { kind: "reset" }
   | { kind: "azure_region"; region: string }
+  | { kind: "auto_check_updates"; enabled: boolean }
   | { kind: "save_provider_key"; provider: ProviderId; key: string }
   | { kind: "clear_provider_key"; provider: ProviderId };
 
@@ -178,6 +179,34 @@ export function createSettingsWriter(
             next.azure_region.length === 0
               ? "Region cleared: a global Azure resource sends no region header."
               : `Region saved: ${next.azure_region}.`,
+        };
+      }
+      case "auto_check_updates": {
+        let current: Settings;
+        try {
+          current = await effects.read();
+        } catch {
+          return failed(SETTINGS_READ_FAILED);
+        }
+        if (current.auto_check_updates === mutation.enabled) {
+          return {
+            mirror: { kind: "settings", settings: current },
+            notice: null,
+          };
+        }
+        // The shell wakes its update schedule when this field changes as a
+        // side effect of the save, so the switch takes effect at once.
+        const next = { ...current, auto_check_updates: mutation.enabled };
+        try {
+          await effects.save(next);
+        } catch {
+          return failed(SAVE_FAILED);
+        }
+        return {
+          mirror: { kind: "settings", settings: next },
+          notice: mutation.enabled
+            ? "Automatic update checks turned on."
+            : "Automatic update checks turned off.",
         };
       }
       case "rebind": {

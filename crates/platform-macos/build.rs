@@ -54,7 +54,10 @@ fn main() {
         println!("cargo:rerun-if-changed=src/macos/{file}.h");
     }
 
-    println!("cargo:rustc-env=TRANSLATOR_BUNDLE_ID={}", bundle_identifier());
+    println!(
+        "cargo:rustc-env=TRANSLATOR_BUNDLE_ID={}",
+        bundle_identifier()
+    );
     println!(
         "cargo:rustc-env=TRANSLATOR_LEGACY_BUNDLE_ID={}",
         legacy_bundle_identifier()

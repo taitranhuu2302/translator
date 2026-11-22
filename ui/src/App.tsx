@@ -37,7 +37,7 @@ import {
   type TranslateResult,
 } from "./translateWindow";
 
-const FALLBACK_SHORTCUT = "Ctrl+Alt+E";
+const FALLBACK_SHORTCUT = "Alt+Shift+E";
 
 /** How many recent entries the History sheet loads. It is a cap, not a page
  * size: v1 shows recent history, and the search narrows what was loaded. */
@@ -200,6 +200,10 @@ export function App() {
     setText(value);
     setCopied(false);
     setCopiedPart(null);
+    // An edit is new text, so the next Translate detects its direction again.
+    // A Swap applies only to the text it produced; carrying it across an edit
+    // would translate somewhere the user did not ask for.
+    setDirection(null);
     // Emptying the input clears both panes and abandons any answer still in
     // flight, so neither pane can show a result for text that is gone. The
     // cleared pane holds no token, so a late answer cannot fill it.
@@ -263,8 +267,8 @@ export function App() {
   // state only — the saved Target is never written.
   const swap = () => {
     if (mode !== "translate") return;
-    if (result.phase !== "translated" || !settings) return;
-    const next = swapDirection(settings.language_pair, result.translation);
+    if (result.phase !== "translated") return;
+    const next = swapDirection(result.translation);
     setText(result.translation.text);
     setDirection(next);
     void runTranslation(result.translation.text, next);
@@ -414,14 +418,14 @@ export function App() {
     settings?.shortcuts.translate_window ?? FALLBACK_SHORTCUT,
   );
   const replaceShortcut = formatShortcut(
-    settings?.shortcuts.replace ?? "Ctrl+Alt+R",
+    settings?.shortcuts.replace ?? "Alt+Shift+R",
   );
 
   const finishOnboarding = async () => {
     setSettings(await ipc.completeOnboarding());
   };
 
-  const canSwap = settings !== null && result.phase === "translated";
+  const canSwap = result.phase === "translated";
 
   return (
     <AppShell

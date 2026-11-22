@@ -4,18 +4,41 @@
 
 A macOS menu-bar app for translating text you have selected in any app — without leaving the app you are typing in.
 
-**Status: v1 feature-complete, built and signed locally.** All four shortcuts, the Translate Window's Translate and Improve modes, History, Settings and first-run onboarding are implemented and covered by the test suite. The app is packaged as a signed `.app` for use on this Mac; it is not distributed, notarised or auto-updated.
+**Status: v1 feature-complete, distributed through GitHub Releases.** All four shortcuts, the Translate Window's Translate and Improve modes, History, Settings and first-run onboarding are implemented and covered by the test suite. A tag-triggered workflow builds and signs a universal bundle and opens a draft Release; the app updates itself from the menu bar. Builds are signed by the maintainer's certificate rather than notarised by Apple — [ADR-0009](docs/adr/0009-self-signed-distribution-and-in-app-updates.md) records the trade-off and the one Gatekeeper step it costs a first install.
 
 ## Shortcuts
 
 | Shortcut | Action |
 | --- | --- |
-| `⌃⌥D` | **Quick Translate** — popup next to the cursor with the translation |
-| `⌃⌥R` | **Replace** the Selection with its translation |
-| `⌃⌥S` | **Read Aloud** — speak the Selection in the system voice |
-| `⌃⌥E` | Open the **Translate Window** |
+| `⌥⇧D` | **Quick Translate** — popup next to the cursor with the translation |
+| `⌥⇧R` | **Replace** the Selection with its translation |
+| `⌥⇧S` | **Read Aloud** — speak the Selection in the system voice |
+| `⌥⇧E` | Open the **Translate Window** |
 
 The bindings are user-editable in Settings.
+
+## Install
+
+Download the latest `Neris_<version>_universal.dmg` from
+[Releases](https://github.com/taitranhuu2302/translator/releases/latest), drag
+**Neris** into **Applications**, then remove the quarantine flag once — the
+bundle is signed by the maintainer, not notarised by Apple:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Neris.app
+```
+
+Open Neris and grant Accessibility once; the grant survives every update.
+[docs/install.md](docs/install.md) has the full first-run steps.
+
+## Updates
+
+A Release build checks GitHub at launch and every six hours and downloads a
+newer version in the background. It never restarts on its own: when the update
+is ready, the menu bar gains **Restart to Update to X.Y.Z…**. Settings →
+Updates shows the current version, a **Check now** button and a switch that
+turns the automatic check off. A local `scripts/build.sh` bundle has no
+updater and can never replace itself.
 
 ## How it works
 
@@ -45,7 +68,7 @@ See [ADR-0001](docs/adr/0001-rust-core-with-tauri-shell.md) for the stack, [ADR-
 
 - macOS 14 or later
 - Rust toolchain (stable)
-- Node 20+ — build-time only, never a runtime dependency
+- Node 22+ — build-time only, never a runtime dependency
 
 ## Build
 
@@ -63,6 +86,15 @@ npm run build         # build ui/dist
 The per-package commands (`npm --prefix ui run test`, `npm --prefix ui run build`) still work for a fast loop on the UI alone.
 
 `scripts/build.sh` packages a real `.app` with `LSUIElement` and signs it with the stable local identity; it refuses to package unsigned, ad-hoc, or with the frontend placeholder still in `ui/dist`. See [ADR-0004](docs/adr/0004-stable-signing-from-first-commit.md).
+
+Both `scripts/build.sh` and the release workflow delegate to `scripts/package.sh`, so the bundle this Mac runs and the bundle a release ships are assembled by the same code. `--universal` builds both Apple architectures and lipos them; `--updater` is what a release adds, and is deliberately absent from a local build.
+
+```bash
+./scripts/package.sh --universal            # both architectures, no updater
+./scripts/package.sh --universal --updater  # what a release ships
+```
+
+A release is a tag on `main`: bump the version with `./scripts/set-version.sh X.Y.Z`, push `vX.Y.Z`, and the workflow verifies the tag, re-runs the suite, builds, signs and opens a draft. The secrets, the update key and the publishing step are in [docs/release.md](docs/release.md). See [ADR-0008](docs/adr/0008-tag-driven-release-from-github.md).
 
 ## Develop
 
@@ -83,9 +115,13 @@ The app is now Neris and its bundle identifier changed, which macOS keys the Acc
 
 - [GLOSSARY.md](GLOSSARY.md) — the domain language used in code, specs and tickets
 - [docs/adr/](docs/adr/) — architecture decisions
+- [docs/install.md](docs/install.md) — what a first install downloads and the one Gatekeeper step
+- [docs/release.md](docs/release.md) — the maintainer runbook: secrets, the update key, cutting and publishing a release
 - [.scratch/translator-v1/spec.md](.scratch/translator-v1/spec.md) — the v1 spec, its tickets and the manual test plan
 - [.scratch/architecture-deepening/spec.md](.scratch/architecture-deepening/spec.md) — the consolidation effort: one home per rule
 - [.scratch/ui-redesign/spec.md](.scratch/ui-redesign/spec.md) — the design system effort: Tailwind, shadcn and the Neris palette
+- [.scratch/release-pipeline/spec.md](.scratch/release-pipeline/spec.md) — CI, tag-driven releases and in-app updates
+- [.scratch/windows-port/spec.md](.scratch/windows-port/spec.md) — the Windows contract: artifact, manifest key, installer and CI job
 - [.claude/skills/neris-ui/SKILL.md](.claude/skills/neris-ui/SKILL.md) — the UI conventions a later change has to follow
 
 Each effort keeps one ticket per independently shippable change under `issues/`. Anything that needs a human eye is handed over as a table under `checks/`: the app is built and signed by an agent but never launched by one, so the person runs the bundle and walks the table.

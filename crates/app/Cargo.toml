@@ -12,8 +12,13 @@ path = "src/main.rs"
 [features]
 # Production only: makes `generate_context!` embed `frontendDist` instead of
 # loading `devUrl`. `tauri dev` drops it via `--no-default-features`, and
-# `tauri build` adds it, so `scripts/build.sh` has to ask for it explicitly.
+# `tauri build` adds it, so `scripts/package.sh` has to ask for it explicitly.
 custom-protocol = ["tauri/custom-protocol"]
+# Release builds only: the app may replace itself with a newer Release
+# (docs/adr/0009-self-signed-distribution-and-in-app-updates.md). A local
+# `scripts/build.sh` run never enables this — only `package.sh --updater`, which
+# the release workflow passes — so a local build reports updates as disabled.
+updater = ["dep:tauri-plugin-updater"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -27,4 +32,5 @@ translator-core = { workspace = true }
 translator-platform-macos = { workspace = true }
 tauri-plugin-dialog = "2"
 tauri-plugin-autostart = "2.7"
+tauri-plugin-updater = { version = "2", optional = true }
 tauri-nspanel = "2.1"

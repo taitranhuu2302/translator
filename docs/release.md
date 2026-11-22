@@ -1,0 +1,109 @@
+# Release runbook
+
+The pipeline is tag-driven (ADR-0008). This file is everything the person
+cutting a release has to know that is not in the workflow itself.
+
+## One-time setup
+
+Four things exist once, in GitHub → Settings → Secrets and variables → Actions.
+
+### 1. The signing certificate
+
+The app is signed by the certificate ADR-0004 established — **the same one this
+Mac builds with**, so the designated requirement never changes across releases
+(ADR-0009). Export it once:
+
+1. Keychain Access → **My Certificates** → right-click *Translator Local
+   Signing* → **Export…** → `.p12`, with a password.
+2. Base64 it:
+
+   ```bash
+   base64 -i TranslatorLocalSigning.p12 | pbcopy
+   ```
+
+3. Add two secrets:
+   - `APPLE_CERTIFICATE_BASE64` — the clipboard content
+   - `APPLE_CERTIFICATE_PASSWORD` — the export password
+4. Add `KEYCHAIN_PASSWORD` — any random string. It only protects the temporary
+   keychain the workflow creates on the runner.
+
+Keep the `.p12` somewhere safe offline. **This certificate must sign every
+release**; losing it means every user re-grants Accessibility once, and
+changing it deliberately has the same cost.
+
+### 2. The update key
+
+The update key is a separate minisign pair. Its public half is authored in
+`crates/app/tauri.conf.json`; its private half is only ever in CI.
+
+```bash
+./scripts/update-key.sh
+```
+
+The script prints the public key, writes the private key to
+`~/.tauri/neris-updater.key`, and tells you what to paste. Add two secrets:
+
+- `TAURI_SIGNING_PRIVATE_KEY` — the file's content
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the password you chose
+
+Then put the printed public key into `plugins.updater.pubkey` in
+`crates/app/tauri.conf.json` and commit it. The release script refuses to run
+while that value still starts with `PLACEHOLDER`.
+
+Losing the private key means no further in-app updates for existing installs —
+they can still download a DMG. Rotating it requires a release whose own
+signature the old key can verify, so do not lose it.
+
+### 3. Nothing else
+
+The workflow uses the repository's `GITHUB_TOKEN` for the release; no personal
+token is needed. The repository must stay **public** for the updater and for
+the release assets to be readable without credentials.
+
+## Cut a release
+
+1. Bump the version — it is written in one place and copied to the others:
+
+   ```bash
+   ./scripts/set-version.sh 0.3.0
+   ```
+
+2. Update anything that names the old version (the README's status line is the
+   only usual suspect), then commit:
+
+   ```bash
+   git commit -am "Release 0.3.0"
+   ```
+
+3. Tag and push both:
+
+   ```bash
+   git tag v0.3.0 && git push origin main --tags
+   ```
+
+4. The workflow refuses a tag that disagrees with `scripts/version.sh`, runs
+   `scripts/test.sh`, builds universal, signs, and opens a **draft** release
+   with five assets: the DMG, the tarball, its `.sig`, `latest.json` and the
+   generated notes.
+5. Download the DMG, install it on a clean account if you can, and walk
+   `.scratch/release-pipeline/checks/release-smoke.md`. The agent builds; a
+   person opens the bundle.
+6. Edit the notes if the generated ones are thin, then **publish** the release.
+   Until you publish, no app sees it.
+
+## When something goes wrong
+
+- **A tag with the wrong version**: delete the tag (`git tag -d vX.Y.Z && git
+  push --delete origin vX.Y.Z`), fix, re-tag. The workflow failed before it
+  built anything.
+- **The bundle installs but updates fail**: check the public key in
+  `tauri.conf.json` matches the key that signed the asset, and that
+  `latest.json` is attached to the *latest published* release. Drafts are
+  invisible to `/releases/latest/download/`.
+- **A bad release is published**: publish a fixed version above it. Client
+  installs are not rolled back by the pipeline; a user can always install the
+  older DMG by hand.
+- **The certificate expired or was replaced**: a release signed by the new
+  certificate loses every user's Accessibility grant once. Say so in the notes
+  and add the "re-grant Accessibility" step to the install table for that
+  release.

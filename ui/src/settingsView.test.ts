@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { LanguagePair } from "./ipc";
-import { directionSentence, languageName, withTarget } from "./settingsView";
+import { languageName } from "./languageLabel";
+import { directionSentence, withTarget } from "./settingsView";
 
 const pair = (target: string, partner: string): LanguagePair => ({
   target,
@@ -9,22 +10,22 @@ const pair = (target: string, partner: string): LanguagePair => ({
 });
 
 describe("the Language Pair sentence", () => {
-  it("says the direction the saved pair translates in", () => {
+  it("says the pair works both ways", () => {
     expect(directionSentence(pair("en", "vi"))).toBe(
-      "Translates from Vietnamese into English.",
+      "Translates both ways between Vietnamese and English.",
     );
   });
 
-  it("turns around when the Target changes", () => {
+  it("keeps the sentence symmetrical when the Target turns around", () => {
     expect(directionSentence(pair("vi", "en"))).toBe(
-      "Translates from English into Vietnamese.",
+      "Translates both ways between English and Vietnamese.",
     );
   });
 
   it("names a language it does not offer by its own code", () => {
     expect(languageName("ja")).toBe("ja");
     expect(directionSentence(pair("en", "ja"))).toBe(
-      "Translates from ja into English.",
+      "Translates both ways between ja and English.",
     );
   });
 });

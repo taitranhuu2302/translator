@@ -31,11 +31,19 @@ impl Default for MacSettingsStore {
 impl SettingsStore for MacSettingsStore {
     fn load(&self) -> Result<Settings, SettingsError> {
         match fs::read(&self.path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
-                SettingsError::Storage {
-                    message: format!("{}: {error}", self.path.display()),
+            Ok(bytes) => {
+                let mut settings: Settings =
+                    serde_json::from_slice(&bytes).map_err(|error| SettingsError::Storage {
+                        message: format!("{}: {error}", self.path.display()),
+                    })?;
+                // A file written with the previous shortcut defaults follows the
+                // current ones once. The upgrade is already in memory, so a failed
+                // write must not stop the app opening — it runs again next launch.
+                if settings.upgrade_shortcut_defaults() {
+                    let _ = self.save(&settings);
                 }
-            }),
+                Ok(settings)
+            }
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(Settings::default()),
             Err(error) => Err(SettingsError::Storage {
                 message: format!("{}: {error}", self.path.display()),
@@ -54,7 +62,10 @@ impl SettingsStore for MacSettingsStore {
 /// a sibling file and are renamed into place.
 fn write_atomically(path: &Path, settings: &Settings) -> std::io::Result<()> {
     let directory = path.parent().ok_or_else(|| {
-        std::io::Error::new(ErrorKind::InvalidInput, "the settings path has no directory")
+        std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "the settings path has no directory",
+        )
     })?;
     fs::create_dir_all(directory)?;
 
@@ -75,7 +86,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-    use translator_core::LanguagePair;
+    use translator_core::{LanguagePair, ShortcutBindings};
 
     fn temp_path(name: &str) -> PathBuf {
         // Parallel tests can read the same `SystemTime`; the counter keeps each
@@ -121,6 +132,85 @@ mod tests {
 
         assert_eq!(store.load().expect("load settings"), settings);
         assert!(path.exists());
+    }
+
+    /// The shipped defaults before they moved from `⌃⌥` to `⌥⇧`, in the shape a
+    /// settings file written by that build has: no `shortcuts_version`.
+    const OLD_DEFAULTS_FILE: &str = r#"{
+        "language_pair": { "target": "en", "partner": "vi" },
+        "shortcuts": {
+            "quick_translate": "Ctrl+Alt+D",
+            "replace": "Ctrl+Alt+R",
+            "read_aloud": "Ctrl+Alt+S",
+            "translate_window": "Ctrl+Alt+E"
+        },
+        "start_at_login": false
+    }"#;
+
+    fn write_file(path: &Path, contents: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+
+    #[test]
+    fn a_file_written_with_the_old_defaults_is_upgraded_and_saved() {
+        let path = temp_path("settings.json");
+        write_file(&path, OLD_DEFAULTS_FILE);
+        let store = MacSettingsStore::at(&path);
+
+        let settings = store.load().expect("the old file loads");
+
+        assert_eq!(settings.shortcuts, ShortcutBindings::default());
+        assert_eq!(
+            settings.shortcuts_version,
+            Settings::SHORTCUT_DEFAULTS_VERSION
+        );
+        // Written back, so the upgrade does not run again on every launch.
+        let saved: Settings = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.shortcuts, ShortcutBindings::default());
+        assert_eq!(saved.shortcuts_version, Settings::SHORTCUT_DEFAULTS_VERSION);
+    }
+
+    #[test]
+    fn a_binding_the_user_chose_survives_the_upgrade_on_disk() {
+        let path = temp_path("settings.json");
+        write_file(
+            &path,
+            r#"{
+                "language_pair": { "target": "en", "partner": "vi" },
+                "shortcuts": {
+                    "quick_translate": "Cmd+Shift+K",
+                    "replace": "Ctrl+Alt+R",
+                    "read_aloud": "Ctrl+Alt+S",
+                    "translate_window": "Ctrl+Alt+E"
+                },
+                "start_at_login": false
+            }"#,
+        );
+        let store = MacSettingsStore::at(&path);
+
+        let settings = store.load().expect("the old file loads");
+
+        assert_eq!(settings.shortcuts.quick_translate, "Cmd+Shift+K");
+        assert_eq!(settings.shortcuts.replace, "Alt+Shift+R");
+    }
+
+    #[test]
+    fn an_old_default_chosen_after_the_upgrade_is_left_alone() {
+        let path = temp_path("settings.json");
+        let store = MacSettingsStore::at(&path);
+        let chosen = Settings {
+            shortcuts: ShortcutBindings {
+                quick_translate: "Ctrl+Alt+D".to_owned(),
+                ..ShortcutBindings::default()
+            },
+            ..Settings::default()
+        };
+        store.save(&chosen).expect("save settings");
+
+        let settings = store.load().expect("the upgraded file loads");
+
+        assert_eq!(settings.shortcuts.quick_translate, "Ctrl+Alt+D");
     }
 
     #[test]

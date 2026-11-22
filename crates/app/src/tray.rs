@@ -27,6 +27,10 @@ pub const ACCESSIBILITY_NOT_GRANTED_ID: &str = "accessibility-not-granted";
 /// Quit. It is the last row, as menu-bar apps put it.
 pub const QUIT_ID: &str = "quit";
 
+/// The row that offers to restart into an update that is downloaded and already
+/// installed. It exists only while one waits, so the menu bar never nags.
+pub const INSTALL_UPDATE_ID: &str = "install-update";
+
 /// One row of the menu. A separator has [`SEPARATOR_ID`] as its id, an empty
 /// label and no accelerator.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,10 +83,15 @@ fn action_label(action: ShortcutAction) -> &'static str {
 }
 
 /// The whole menu, top to bottom: the four actions with their current
-/// combinations, the accessibility state, and Quit. `granted` is the permission
-/// as the app last observed it.
-pub fn tray_entries(bindings: &ShortcutBindings, granted: bool) -> Vec<TrayEntry> {
-    let mut entries = Vec::with_capacity(8);
+/// combinations, the accessibility state, the update row when one waits, and
+/// Quit. `granted` is the permission as the app last observed it, and `update`
+/// the version ready for a restart.
+pub fn tray_entries(
+    bindings: &ShortcutBindings,
+    granted: bool,
+    update: Option<&str>,
+) -> Vec<TrayEntry> {
+    let mut entries = Vec::with_capacity(10);
     for action in ShortcutAction::ALL {
         entries.push(TrayEntry {
             id: action_id(action).to_owned(),
@@ -104,6 +113,14 @@ pub fn tray_entries(bindings: &ShortcutBindings, granted: bool) -> Vec<TrayEntry
             accelerator: None,
         }
     });
+    if let Some(version) = update {
+        entries.push(TrayEntry::separator());
+        entries.push(TrayEntry {
+            id: INSTALL_UPDATE_ID.to_owned(),
+            label: format!("Restart to Update to {version}…"),
+            accelerator: None,
+        });
+    }
     entries.push(TrayEntry::separator());
     entries.push(TrayEntry {
         id: QUIT_ID.to_owned(),
@@ -120,9 +137,10 @@ pub fn menu(
     app: &AppHandle,
     bindings: &ShortcutBindings,
     granted: bool,
+    update: Option<&str>,
 ) -> tauri::Result<Menu<tauri::Wry>> {
     let mut items: Vec<Box<dyn IsMenuItem<tauri::Wry>>> = Vec::new();
-    for entry in tray_entries(bindings, granted) {
+    for entry in tray_entries(bindings, granted, update) {
         if entry.is_separator() {
             items.push(Box::new(PredefinedMenuItem::separator(app)?));
             continue;
@@ -149,19 +167,26 @@ pub fn menu(
     Menu::with_items(app, &refs)
 }
 
-/// Replace the tray icon's menu with one built from the live bindings. It runs
-/// on the main thread because both the menu and the icon are AppKit objects,
-/// and it is called after launch, after a rebind or reset, and when the
-/// Accessibility permission is observed to change.
-pub fn refresh_tray(app: &AppHandle, bindings: &ShortcutBindings) {
-    let bindings = bindings.clone();
-    let outcome = on_main_thread(app, move |handle| {
+/// Replace the tray icon's menu with one built from the live bindings, the
+/// permission and the update waiting for a restart. It runs on the main thread
+/// because both the menu and the icon are AppKit objects, and it is called after
+/// launch, after a rebind or reset, when the Accessibility permission is
+/// observed to change, and when an update becomes ready.
+pub fn refresh_tray(app: &AppHandle) {
+    let outcome = on_main_thread(app, |handle| {
         let Some(icon) = handle.tray_by_id(TRAY_ID) else {
             eprintln!("Neris: the tray menu was not updated: the menu bar item is missing");
             return;
         };
+        let bindings = handle
+            .state::<AppState>()
+            .engine
+            .settings()
+            .map(|settings| settings.shortcuts)
+            .unwrap_or_default();
         let granted = handle.state::<AppState>().engine.accessibility_granted();
-        let menu = match menu(handle, &bindings, granted) {
+        let update = crate::updates::ready_version(handle);
+        let menu = match menu(handle, &bindings, granted, update.as_deref()) {
             Ok(menu) => menu,
             Err(error) => {
                 eprintln!("Neris: the tray menu was not built: {error}");
@@ -194,7 +219,7 @@ mod tests {
             translate_window: "Cmd+Shift+O".to_owned(),
         };
 
-        let entries = tray_entries(&bindings, true);
+        let entries = tray_entries(&bindings, true, None);
         let actions: Vec<&TrayEntry> = entries
             .iter()
             .filter(|entry| action_for_id(&entry.id).is_some())
@@ -240,17 +265,17 @@ mod tests {
 
     #[test]
     fn a_shipped_menu_shows_the_shipped_bindings() {
-        let entries = tray_entries(&shipped(), true);
+        let entries = tray_entries(&shipped(), true, None);
 
-        assert_eq!(entries[0].accelerator.as_deref(), Some("Ctrl+Alt+D"));
-        assert_eq!(entries[1].accelerator.as_deref(), Some("Ctrl+Alt+R"));
-        assert_eq!(entries[2].accelerator.as_deref(), Some("Ctrl+Alt+S"));
-        assert_eq!(entries[3].accelerator.as_deref(), Some("Ctrl+Alt+E"));
+        assert_eq!(entries[0].accelerator.as_deref(), Some("Alt+Shift+D"));
+        assert_eq!(entries[1].accelerator.as_deref(), Some("Alt+Shift+R"));
+        assert_eq!(entries[2].accelerator.as_deref(), Some("Alt+Shift+S"));
+        assert_eq!(entries[3].accelerator.as_deref(), Some("Alt+Shift+E"));
     }
 
     #[test]
     fn the_menu_groups_actions_accessibility_and_quit_with_separators() {
-        let entries = tray_entries(&shipped(), true);
+        let entries = tray_entries(&shipped(), true, None);
 
         assert_eq!(
             entries
@@ -276,8 +301,39 @@ mod tests {
     }
 
     #[test]
+    fn a_ready_update_adds_one_row_above_quit() {
+        let entries = tray_entries(&shipped(), true, Some("0.4.0"));
+
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "quick_translate",
+                "replace",
+                "read_aloud",
+                "translate_window",
+                SEPARATOR_ID,
+                "accessibility-granted",
+                SEPARATOR_ID,
+                INSTALL_UPDATE_ID,
+                SEPARATOR_ID,
+                "quit",
+            ]
+        );
+        let row = entries
+            .iter()
+            .find(|entry| entry.id == INSTALL_UPDATE_ID)
+            .expect("the update row");
+        assert_eq!(row.label, "Restart to Update to 0.4.0…");
+        assert_eq!(row.accelerator, None);
+        assert_eq!(action_for_id(&row.id), None);
+    }
+
+    #[test]
     fn a_granted_permission_reads_as_granted_and_is_not_a_action() {
-        let entries = tray_entries(&shipped(), true);
+        let entries = tray_entries(&shipped(), true, None);
         let row = entries
             .iter()
             .find(|entry| entry.id == ACCESSIBILITY_GRANTED_ID)
@@ -290,7 +346,7 @@ mod tests {
 
     #[test]
     fn a_missing_permission_offers_to_open_the_settings_pane() {
-        let entries = tray_entries(&shipped(), false);
+        let entries = tray_entries(&shipped(), false, None);
         let row = entries
             .iter()
             .find(|entry| entry.id == ACCESSIBILITY_NOT_GRANTED_ID)
@@ -308,6 +364,7 @@ mod tests {
             assert_eq!(action_for_id(action_id(action)), Some(action));
         }
         assert_eq!(action_for_id(ACCESSIBILITY_NOT_GRANTED_ID), None);
+        assert_eq!(action_for_id(INSTALL_UPDATE_ID), None);
         assert_eq!(action_for_id(QUIT_ID), None);
         assert_eq!(action_for_id(SEPARATOR_ID), None);
     }

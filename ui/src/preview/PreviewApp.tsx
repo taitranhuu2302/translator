@@ -54,6 +54,7 @@ Văn bản dài là trường hợp đáng chú ý nhất: khung kết quả t�
 const TRANSLATION: Translation = {
   text: TRANSLATION_VI,
   provider: "azure",
+  source: "en",
   detected_source: "en",
   target: "vi",
 };
@@ -61,6 +62,7 @@ const TRANSLATION: Translation = {
 const TRANSLATION_LONG: Translation = {
   text: TRANSLATION_VI_LONG,
   provider: "my_memory",
+  source: "en",
   detected_source: "en",
   target: "vi",
 };
@@ -277,8 +279,8 @@ export function PreviewApp() {
           onModeChange={switchMode}
           onOpenHistory={() => undefined}
           onOpenSettings={() => undefined}
-          translateShortcut="⌃⌥E"
-          replaceShortcut="⌃⌥R"
+          translateShortcut="⌥⇧E"
+          replaceShortcut="⌥⇧R"
         >
           {scene.id === "notices" ? (
             <NoticesScene />
@@ -298,7 +300,7 @@ export function PreviewApp() {
               onCopyPart={(_part: ImprovePart) => undefined}
               onSwap={() => undefined}
               canSwap={scene.state === "done"}
-              shortcut="⌃⌥E"
+              shortcut="⌥⇧E"
             />
           )}
 
@@ -404,7 +406,7 @@ function NoticesScene() {
         {NOTICES.map((notice) => (
           <NoticeView key={notice.title} notice={notice} />
         ))}
-        <CaptureNoticeView granted shortcut="⌃⌥E" notice={NOTICES[0]} />
+        <CaptureNoticeView granted shortcut="⌥⇧E" notice={NOTICES[0]} />
       </div>
     </div>
   );

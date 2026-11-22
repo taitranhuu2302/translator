@@ -32,23 +32,12 @@ config_value() {
   ' "$CONFIG" "$1"
 }
 
-workspace_version() {
-  awk '
-    /^\[workspace\.package\]/ { section = 1; next }
-    /^\[/ { section = 0 }
-    section && /^version[[:space:]]*=/ {
-      sub(/^version[[:space:]]*=[[:space:]]*"/, "")
-      sub(/".*$/, "")
-      print
-      exit
-    }
-  ' Cargo.toml
-}
-
 PLIST_ID="$(plist_value CFBundleIdentifier)"
 LEGACY_ID="$(tr -d '[:space:]' < "$LEGACY")"
 CONFIG_ID="$(config_value identifier)"
-WORKSPACE_VERSION="$(workspace_version)"
+# The extraction lives in one script; a second copy here would be exactly the
+# drift this file exists to catch.
+WORKSPACE_VERSION="$(./scripts/version.sh)"
 
 [ -n "$PLIST_ID" ] || fail "$PLIST declares no CFBundleIdentifier."
 [ -n "$WORKSPACE_VERSION" ] || fail "Cargo.toml declares no [workspace.package] version."

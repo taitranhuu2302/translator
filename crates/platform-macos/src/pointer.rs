@@ -225,13 +225,7 @@ mod tests {
             DESKTOP_HEIGHT,
             GAP,
         );
-        assert_eq!(
-            placed,
-            Point {
-                x: 508.0,
-                y: 588.0
-            }
-        );
+        assert_eq!(placed, Point { x: 508.0, y: 588.0 });
     }
 
     #[test]
@@ -243,13 +237,7 @@ mod tests {
             DESKTOP_HEIGHT,
             GAP,
         );
-        assert_eq!(
-            placed,
-            Point {
-                x: 508.0,
-                y: 732.0
-            }
-        );
+        assert_eq!(placed, Point { x: 508.0, y: 732.0 });
     }
 
     #[test]
@@ -340,19 +328,8 @@ mod tests {
     #[test]
     fn a_point_scale_desktop_keeps_the_top_left_point_unchanged() {
         assert_eq!(
-            to_physical(
-                Point {
-                    x: 508.0,
-                    y: 588.0
-                },
-                1_080.0,
-                1_080.0,
-                1.0
-            ),
-            Point {
-                x: 508.0,
-                y: 588.0
-            }
+            to_physical(Point { x: 508.0, y: 588.0 }, 1_080.0, 1_080.0, 1.0),
+            Point { x: 508.0, y: 588.0 }
         );
     }
 
@@ -361,16 +338,8 @@ mod tests {
         // On a 2x primary, the top-left of the desktop is y = 0 physically, but
         // tao flips with 2160, so the conversion has to compensate.
         assert_eq!(
-            to_physical(
-                Point { x: 0.0, y: 0.0 },
-                1_080.0,
-                2_160.0,
-                2.0
-            ),
-            Point {
-                x: 0.0,
-                y: 2_160.0
-            }
+            to_physical(Point { x: 0.0, y: 0.0 }, 1_080.0, 2_160.0, 2.0),
+            Point { x: 0.0, y: 2_160.0 }
         );
     }
 
@@ -379,15 +348,7 @@ mod tests {
         // Cursor is on the 1x primary, the window is still a 1x window, and the
         // primary is 2x: the backend divides by 1 and flips with 2160.
         assert_eq!(
-            to_physical(
-                Point {
-                    x: 508.0,
-                    y: 588.0
-                },
-                1_080.0,
-                2_160.0,
-                1.0
-            ),
+            to_physical(Point { x: 508.0, y: 588.0 }, 1_080.0, 2_160.0, 1.0),
             Point {
                 x: 508.0,
                 y: 1_668.0

@@ -142,10 +142,9 @@ impl TranslationProvider for AzureProvider {
         // Before the network, so a keyless install costs nothing.
         let key = self.key()?;
 
-        let body = serde_json::to_string(&serde_json::json!([{ "text": request.text }]))
-            .map_err(|error| {
-                FAILURES.malformed(format!("the request body could not be built: {error}"))
-            })?;
+        let body = serde_json::to_string(&serde_json::json!([{ "text": request.text }])).map_err(
+            |error| FAILURES.malformed(format!("the request body could not be built: {error}")),
+        )?;
 
         let response = self
             .http
@@ -192,10 +191,8 @@ fn read_answer(status: u16, body: &str) -> Result<ProviderTranslation, ProviderE
     if (200..=299).contains(&status) {
         return read_translation(body);
     }
-    Err(
-        failure::status(&FAILURES, status, body)
-            .expect("Azure's failure policy settles every non-success status"),
-    )
+    Err(failure::status(&FAILURES, status, body)
+        .expect("Azure's failure policy settles every non-success status"))
 }
 
 fn read_translation(body: &str) -> Result<ProviderTranslation, ProviderError> {
@@ -297,13 +294,17 @@ mod tests {
             "https://api.cognitive.microsofttranslator.com/translate\
              ?api-version=3.0&to=en&from=vi"
         );
-        assert!(requests[0]
-            .headers
-            .contains(&("Ocp-Apim-Subscription-Key".to_owned(), "azure-key".to_owned())));
+        assert!(requests[0].headers.contains(&(
+            "Ocp-Apim-Subscription-Key".to_owned(),
+            "azure-key".to_owned()
+        )));
         assert!(requests[0]
             .headers
             .contains(&("Content-Type".to_owned(), CONTENT_TYPE.to_owned())));
-        assert_eq!(requests[0].body.as_deref(), Some(r#"[{"text":"Xin chào"}]"#));
+        assert_eq!(
+            requests[0].body.as_deref(),
+            Some(r#"[{"text":"Xin chào"}]"#)
+        );
     }
 
     #[test]
@@ -332,9 +333,10 @@ mod tests {
             .translate(&vietnamese_to_english("Xin chào"))
             .expect("the fake answers");
 
-        assert!(regional_http.requests()[0]
-            .headers
-            .contains(&("Ocp-Apim-Subscription-Region".to_owned(), "westeurope".to_owned())));
+        assert!(regional_http.requests()[0].headers.contains(&(
+            "Ocp-Apim-Subscription-Region".to_owned(),
+            "westeurope".to_owned()
+        )));
         assert!(!global_http.requests()[0]
             .headers
             .iter()
@@ -573,9 +575,10 @@ mod tests {
             .translate(&vietnamese_to_english("Xin chào"))
             .expect("the new key is used without a restart");
         assert_eq!(http.requests().len(), 1);
-        assert!(http.requests()[0]
-            .headers
-            .contains(&("Ocp-Apim-Subscription-Key".to_owned(), "saved-in-settings".to_owned())));
+        assert!(http.requests()[0].headers.contains(&(
+            "Ocp-Apim-Subscription-Key".to_owned(),
+            "saved-in-settings".to_owned()
+        )));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AnswerToken } from "./answerToken";
-import type { LanguagePair, Translation } from "./ipc";
+import type { Translation } from "./ipc";
 import {
   EMPTY_RESULT,
   reduceResult,
@@ -9,67 +9,39 @@ import {
   type TranslateResult,
 } from "./translateWindow";
 
-const pair: LanguagePair = { target: "en", partner: "vi" };
-
 const translation: Translation = {
   text: "Hello",
   provider: "my_memory",
+  source: "vi",
   detected_source: null,
   target: "en",
 };
 
 describe("swapping a Translate Window translation", () => {
   it("sends the result back to the language it came from", () => {
-    expect(swapDirection(pair, translation)).toEqual({
+    expect(swapDirection(translation)).toEqual({
       source: "en",
       target: "vi",
     });
   });
 
-  it("uses the provider's detection when the result came from the partner", () => {
-    const englishToVietnamese: Translation = {
-      ...translation,
-      text: "Xin chào",
-      target: "vi",
-      detected_source: "en",
-    };
-
-    expect(swapDirection(pair, englishToVietnamese)).toEqual({
+  it("reverses a translation that went into Vietnamese", () => {
+    expect(
+      swapDirection({
+        text: "Xin chào",
+        provider: "azure",
+        source: "en",
+        detected_source: "en",
+        target: "vi",
+      }),
+    ).toEqual({
       source: "vi",
       target: "en",
     });
   });
 
-  it("never swaps a language into itself", () => {
-    const nonsenseDetection: Translation = {
-      ...translation,
-      target: "en",
-      detected_source: "en",
-    };
-
-    expect(swapDirection(pair, nonsenseDetection)).toEqual({
-      source: "en",
-      target: "vi",
-    });
-  });
-
-  it("stays inside the saved pair when the detection names a third language", () => {
-    const thirdLanguage: Translation = {
-      ...translation,
-      target: "vi",
-      detected_source: "fr",
-    };
-
-    expect(swapDirection(pair, thirdLanguage)).toEqual({
-      source: "vi",
-      target: "en",
-    });
-  });
-
-  it("reverses the direction when the saved target is the partner", () => {
-    const vietnameseTargetPair: LanguagePair = { target: "vi", partner: "en" };
-
-    expect(swapDirection(vietnameseTargetPair, translation)).toEqual({
+  it("ignores whatever the provider reported detecting", () => {
+    expect(swapDirection({ ...translation, detected_source: "fr" })).toEqual({
       source: "en",
       target: "vi",
     });

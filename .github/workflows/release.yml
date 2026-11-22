@@ -1,0 +1,113 @@
+name: Release
+
+# Pushing a `vX.Y.Z` tag is the release (ADR-0008). The workflow builds and
+# signs the same universal bundle a local `scripts/package.sh --universal`
+# produces, turns it into the updater payload and the first-install DMG, and
+# opens a DRAFT release. Publishing is the human step after the smoke table in
+# .scratch/release-pipeline/checks/release-smoke.md passes.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign and draft
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The notes range is the previous tag..HEAD, and the version check
+          # reads the tag, so the full history and every tag must be here.
+          fetch-depth: 0
+
+      - name: Tag matches the workspace version
+        run: ./scripts/check-tag.sh "$GITHUB_REF_NAME"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install the workspace
+        run: npm ci --no-audit --no-fund
+
+      # The certificate is the same identity this Mac builds with (ADR-0004,
+      # ADR-0009); it lives in a throwaway keychain that dies with the runner.
+      - name: Import the signing certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CERTIFICATE_BASE64" ]; then
+            echo "error: APPLE_CERTIFICATE_BASE64 is not set; see docs/release.md." >&2
+            exit 1
+          fi
+
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          CERTIFICATE="$RUNNER_TEMP/certificate.p12"
+          printf '%s' "$CERTIFICATE_BASE64" > "$RUNNER_TEMP/certificate.b64"
+          openssl base64 -d -in "$RUNNER_TEMP/certificate.b64" -out "$CERTIFICATE"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERTIFICATE" -k "$KEYCHAIN" -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          # codesign must use the key without an interactive prompt.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" \
+            $(security list-keychains -d user | tr -d '"')
+
+          rm -f "$CERTIFICATE" "$RUNNER_TEMP/certificate.b64"
+
+          security find-identity -v -p codesigning
+
+      # The release re-runs the suite before it packages anything, so a tag
+      # never ships a tree the tests would reject.
+      - name: Formatting
+        run: cargo fmt --check
+
+      - name: Suite
+        run: ./scripts/test.sh
+
+      - name: Package universal
+        run: ./scripts/package.sh --universal --updater
+
+      - name: Assemble the release
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: ./scripts/release.sh
+
+      # Drafts are invisible to /releases/latest/download/, so an update check
+      # never sees this release until a person publishes it.
+      - name: Open the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(./scripts/version.sh)"
+          gh release create "v$VERSION" \
+            --draft \
+            --title "Neris $VERSION" \
+            --notes-file dist/notes.md \
+            dist/*

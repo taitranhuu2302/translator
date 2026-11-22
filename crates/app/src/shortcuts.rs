@@ -381,15 +381,15 @@ mod tests {
     #[test]
     fn a_combination_another_action_owns_names_that_action() {
         assert_eq!(
-            plan(ShortcutAction::QuickTranslate, "Ctrl+Alt+R", &defaults()),
+            plan(ShortcutAction::QuickTranslate, "Alt+Shift+R", &defaults()),
             Plan::InUse {
-                binding: "Ctrl+Alt+R".to_owned(),
+                binding: "Alt+Shift+R".to_owned(),
                 other: ShortcutAction::Replace,
             }
         );
         assert_eq!(
             problem_message(&Plan::InUse {
-                binding: "Ctrl+Alt+R".to_owned(),
+                binding: "Alt+Shift+R".to_owned(),
                 other: ShortcutAction::Replace,
             })
             .as_deref(),
@@ -502,7 +502,7 @@ mod tests {
             Plan::Apply {
                 binding: "Ctrl+Alt+M".to_owned(),
                 shortcut: parse("Ctrl+Alt+M"),
-                previous: Some(parse("Ctrl+Alt+R")),
+                previous: Some(parse("Alt+Shift+R")),
             }
         );
     }
@@ -624,6 +624,7 @@ mod tests {
             start_at_login: true,
             azure_region: "westeurope".to_owned(),
             onboarding_seen: true,
+            ..Settings::default()
         };
 
         let reset = settings_after_reset(&current);

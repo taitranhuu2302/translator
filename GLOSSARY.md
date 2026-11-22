@@ -12,8 +12,16 @@ _Avoid_: Highlighted text, marked text
 The two languages the app translates between, with one marked as the current target. Text already in the target language is translated into the other member of the pair.
 _Avoid_: Source language, direction
 
+**Detection**:
+The app's own reading of which language a piece of text is written in, made before any request so the Direction can be chosen. It is not the language a provider reports having detected.
+_Avoid_: Auto-detect, language identification, LID
+
 **Target**:
 The language the user has configured as the output language. The other member of the Language Pair is the implicit default for input.
+
+**Direction**:
+The source and target one translation runs between, resolved from the text being translated. It is not a setting, and it may differ from the Language Pair's Target.
+_Avoid_: Mode, way, arrow
 
 **Replace**:
 Overwriting the Selection in the app that owns it with its translation.
@@ -38,3 +46,23 @@ _Avoid_: Main window, dashboard
 **Read Aloud**:
 Speaking the Selection with the system speech voice. It never speaks the translation.
 _Avoid_: TTS, speak, pronunciation
+
+## Releases and Updates
+
+**Release**:
+A version of Neris published for one platform: a tag, the signed artifacts and
+the notes that describe it. Stored on GitHub; only published Releases are
+visible to the app.
+_Avoid_: Build, deploy, shipment
+
+**Update**:
+The app replacing itself in place with a newer Release, verified by the update
+key. It never changes the app's identity, so the Accessibility grant survives
+it.
+_Avoid_: Upgrade, patch, auto-update as a noun
+
+**Update key**:
+The signing key pair that proves an Update came from the maintainer. Its public
+half is authored in the app's config; its private half never leaves the release
+pipeline.
+_Avoid_: Updater key, minisign key

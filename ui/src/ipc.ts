@@ -45,6 +45,9 @@ export interface Settings {
    * resource, and no region header is sent. */
   azure_region: string;
   onboarding_seen: boolean;
+  /** Whether a Release build looks for a newer Release at launch and every six
+   * hours. A local build has no updater, so it changes nothing there. */
+  auto_check_updates: boolean;
 }
 
 /** The four things a global shortcut can do. The spelling is the field name in
@@ -86,6 +89,27 @@ export interface StartAtLoginOutcome {
   problem: string | null;
 }
 
+/** Where the updater is in its life. `disabled` is a build that cannot update
+ * itself: anything but a Release (local `scripts/build.sh` runs). */
+export type UpdateState =
+  | "disabled"
+  | "idle"
+  | "checking"
+  | "downloading"
+  | "up_to_date"
+  | "ready"
+  | "failed";
+
+/** The update as the shell holds it. `available_version` is the one downloaded
+ * and waiting for a restart when `state` is `ready`. */
+export interface UpdateStatus {
+  state: UpdateState;
+  current_version: string;
+  available_version: string | null;
+  /** The sentence shown when `state` is `failed`. */
+  problem: string | null;
+}
+
 /** The text the user selected when a shortcut fired. */
 export interface Selection {
   text: string;
@@ -115,6 +139,12 @@ export type PopupPrefill =
 export interface Translation {
   text: string;
   provider: ProviderId;
+  /** The language this text was translated from, as the engine resolved it
+   * before the request. Unlike `detected_source`, it is never a provider's
+   * opinion; it is the Direction the translation actually ran in. */
+  source: Language;
+  /** What the provider reported detecting, when it reports anything. Recorded,
+   * never used to choose the Direction. */
   detected_source: Language | null;
   target: Language;
 }
@@ -344,6 +374,18 @@ export const ipc = {
   openAccessibilitySettings: (): Promise<void> => call("open_accessibility_settings"),
 
   completeOnboarding: (): Promise<Settings> => call("complete_onboarding"),
+
+  /** The update as the shell holds it right now, so a pane that opens late
+   * still knows whether one is waiting. */
+  updateStatus: (): Promise<UpdateStatus> => call("update_status"),
+
+  /** Look for a newer Release now, download it, and answer with the state it
+   * ended in. The background schedule is untouched. */
+  checkForUpdates: (): Promise<UpdateStatus> => call("check_for_updates"),
+
+  /** Quit and relaunch into the update already downloaded. Refused unless the
+   * shell holds a ready one, so the button that calls this is only drawn then. */
+  restartToUpdate: (): Promise<void> => call("restart_to_update"),
 };
 
 // --- Request ids -----------------------------------------------------------
@@ -413,6 +455,7 @@ export const EVENTS = {
   selectionPrefill: "selection-prefill",
   popupPrefill: "popup-prefill",
   replaceHudPhase: "replace-hud-phase",
+  updateStatus: "update-status",
 } as const;
 
 /** Emitted after the popup is shown. The payload is empty: call
@@ -432,6 +475,16 @@ export function onReplaceHudPhase(
   handler: (phase: ReplacePhase) => void,
 ): Promise<UnlistenFn> {
   return listen<ReplacePhase>(EVENTS.replaceHudPhase, ({ payload }) =>
+    handler(payload),
+  );
+}
+
+/** Every move the updater makes, from a check starting to an update waiting for
+ * a restart. The window that opens mid-flight calls `updateStatus` once. */
+export function onUpdateStatus(
+  handler: (status: UpdateStatus) => void,
+): Promise<UnlistenFn> {
+  return listen<UpdateStatus>(EVENTS.updateStatus, ({ payload }) =>
     handler(payload),
   );
 }

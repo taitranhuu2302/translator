@@ -296,6 +296,7 @@ fn the_popup_replace_writes_the_translation_the_user_saw_without_reading_again()
         text: "Hello".to_owned(),
         provider: ProviderId::MyMemory,
         detected_source: Some(Language::vietnamese()),
+        source: Language::vietnamese(),
         target: Language::english(),
     };
 
@@ -331,6 +332,7 @@ fn a_popup_replace_with_no_captured_selection_writes_nothing() {
         text: "Hello".to_owned(),
         provider: ProviderId::MyMemory,
         detected_source: None,
+        source: Language::vietnamese(),
         target: Language::english(),
     };
 
@@ -354,6 +356,7 @@ fn a_popup_replace_that_the_app_refuses_is_typed_and_records_no_history() {
         text: "Hello".to_owned(),
         provider: ProviderId::MyMemory,
         detected_source: None,
+        source: Language::vietnamese(),
         target: Language::english(),
     };
 
@@ -377,6 +380,7 @@ fn secure_input_refuses_a_popup_replace_before_anything_is_written() {
         text: "Hello".to_owned(),
         provider: ProviderId::MyMemory,
         detected_source: None,
+        source: Language::vietnamese(),
         target: Language::english(),
     };
 
@@ -409,7 +413,9 @@ fn a_rejected_history_write_never_fails_a_replace() {
         Arc::new(harness.credentials.clone()),
     );
 
-    let outcome = engine.replace_selection(|_| {}).expect("history is best-effort");
+    let outcome = engine
+        .replace_selection(|_| {})
+        .expect("history is best-effort");
 
     assert_eq!(outcome.translation.text, "Hello");
     assert_eq!(harness.capture.writes(), vec!["Hello".to_owned()]);
@@ -1138,10 +1144,7 @@ fn blank_text_is_refused_by_the_streaming_improve_entry_point() {
 #[test]
 fn a_whitespace_only_selection_is_nothing_selected_for_quick_translate() {
     for text in ["", "   ", "\n\t "] {
-        let harness = Harness::new(
-            FakeCapture::with_selection(text),
-            provider_saying("Hello"),
-        );
+        let harness = Harness::new(FakeCapture::with_selection(text), provider_saying("Hello"));
 
         let error = harness
             .engine()
@@ -1163,10 +1166,7 @@ fn a_whitespace_only_selection_is_nothing_selected_for_quick_translate() {
 #[test]
 fn a_whitespace_only_selection_is_nothing_selected_for_replace_selection() {
     for text in ["", "   ", "\n\t "] {
-        let harness = Harness::new(
-            FakeCapture::with_selection(text),
-            provider_saying("Hello"),
-        );
+        let harness = Harness::new(FakeCapture::with_selection(text), provider_saying("Hello"));
 
         let error = harness
             .engine()
@@ -1397,8 +1397,10 @@ fn a_normal_translation_in_each_direction_records_and_reopens_the_direction_it_u
 
     match (reopened_english, reopened_vietnamese) {
         (TextOutcome::Translation(english), TextOutcome::Translation(vietnamese)) => {
+            assert_eq!(english.source, Language::vietnamese());
             assert_eq!(english.target, Language::english());
             assert_eq!(english.detected_source, Some(Language::vietnamese()));
+            assert_eq!(vietnamese.source, Language::english());
             assert_eq!(vietnamese.target, Language::vietnamese());
             assert_eq!(
                 vietnamese.detected_source,
@@ -1588,6 +1590,7 @@ fn reopening_a_translation_uses_the_stored_result_and_direction_without_a_provid
             assert_eq!(translation.text, "Hello");
             assert_eq!(translation.provider, ProviderId::MyMemory);
             assert_eq!(translation.detected_source, Some(Language::vietnamese()));
+            assert_eq!(translation.source, Language::vietnamese());
             assert_eq!(translation.target, Language::english());
         }
         other => panic!("expected a translation, got {other:?}"),
@@ -1614,6 +1617,7 @@ fn reopening_a_translation_without_a_known_direction_uses_the_saved_target() {
 
     match outcome {
         TextOutcome::Translation(translation) => {
+            assert_eq!(translation.source, Language::vietnamese());
             assert_eq!(translation.target, Language::english());
             assert_eq!(translation.detected_source, None);
         }
@@ -1823,7 +1827,12 @@ fn a_rate_limit_is_the_providers_sentence_and_does_not_skip_the_rung() {
     let azure_http = FakeHttpClient::responding_with(429, "{}");
     let groq_http = FakeHttpClient::responding_with(429, "{}");
     let my_memory_http = FakeHttpClient::responding_with(429, "");
-    let cases: Vec<(ProviderId, Arc<dyn TranslationProvider>, FakeHttpClient, &str)> = vec![
+    let cases: Vec<(
+        ProviderId,
+        Arc<dyn TranslationProvider>,
+        FakeHttpClient,
+        &str,
+    )> = vec![
         (
             ProviderId::Azure,
             Arc::new(azure_rung(&azure_http)),
@@ -1879,7 +1888,11 @@ fn a_rate_limit_is_asked_again_on_the_next_request() {
         }
     );
     assert_eq!(second, first);
-    assert_eq!(http.requests().len(), 2, "a 429 leaves the rung in the ladder");
+    assert_eq!(
+        http.requests().len(),
+        2,
+        "a 429 leaves the rung in the ladder"
+    );
     assert!(ladder.skipped().is_empty());
 }
 
@@ -1888,7 +1901,9 @@ fn a_server_error_uses_each_rungs_declared_family_and_message() {
     let azure_http = FakeHttpClient::responding_with(500, "");
     let azure = ProviderLadder::single(ProviderId::Azure, Arc::new(azure_rung(&azure_http)));
     assert_eq!(
-        azure.translate(&translation_request("Xin chào")).unwrap_err(),
+        azure
+            .translate(&translation_request("Xin chào"))
+            .unwrap_err(),
         ProviderError::Network {
             provider: ProviderId::Azure,
             message: "Azure answered HTTP 500".to_owned(),
@@ -1898,7 +1913,8 @@ fn a_server_error_uses_each_rungs_declared_family_and_message() {
     let groq_http = FakeHttpClient::responding_with(500, "oops");
     let groq = ProviderLadder::single(ProviderId::Groq, Arc::new(groq_rung(&groq_http)));
     assert_eq!(
-        groq.translate(&translation_request("Xin chào")).unwrap_err(),
+        groq.translate(&translation_request("Xin chào"))
+            .unwrap_err(),
         ProviderError::Network {
             provider: ProviderId::Groq,
             message: "Groq answered HTTP 500".to_owned(),
@@ -1917,8 +1933,10 @@ fn a_server_error_uses_each_rungs_declared_family_and_message() {
     );
 
     let my_memory_http = FakeHttpClient::responding_with(503, "");
-    let my_memory =
-        ProviderLadder::single(ProviderId::MyMemory, Arc::new(my_memory_rung(&my_memory_http)));
+    let my_memory = ProviderLadder::single(
+        ProviderId::MyMemory,
+        Arc::new(my_memory_rung(&my_memory_http)),
+    );
     assert_eq!(
         my_memory
             .translate(&translation_request("Xin chào"))
@@ -1945,7 +1963,11 @@ fn groqs_temporary_statuses_are_its_sentence_and_do_not_skip_the_rung() {
             }
         );
         assert_eq!(second, first);
-        assert_eq!(http.requests().len(), 2, "HTTP {status} is not a session ban");
+        assert_eq!(
+            http.requests().len(),
+            2,
+            "HTTP {status} is not a session ban"
+        );
         assert!(ladder.skipped().is_empty());
     }
 }
@@ -1955,8 +1977,7 @@ fn mymemorys_body_level_quota_signal_is_a_quota_failure_that_skips_the_rung() {
     let body = r#"{"responseData":{"translatedText":"MYMEMORY WARNING: YOU USED ALL AVAILABLE FREE TRANSLATIONS FOR TODAY"},
                    "responseStatus":200,"quotaFinished":true,"responseDetails":""}"#;
     let http = FakeHttpClient::responding_with(200, body);
-    let ladder =
-        ProviderLadder::single(ProviderId::MyMemory, Arc::new(my_memory_rung(&http)));
+    let ladder = ProviderLadder::single(ProviderId::MyMemory, Arc::new(my_memory_rung(&http)));
 
     let (first, _) = ask_twice(&ladder);
 
@@ -1979,7 +2000,9 @@ fn an_unrecognised_status_is_a_malformed_response_with_the_rungs_body_detail() {
     let azure_http = FakeHttpClient::responding_with(404, "no such resource");
     let azure = ProviderLadder::single(ProviderId::Azure, Arc::new(azure_rung(&azure_http)));
     assert_eq!(
-        azure.translate(&translation_request("Xin chào")).unwrap_err(),
+        azure
+            .translate(&translation_request("Xin chào"))
+            .unwrap_err(),
         ProviderError::MalformedResponse {
             provider: ProviderId::Azure,
             message: "Azure answered HTTP 404: no such resource".to_owned(),
@@ -1992,7 +2015,8 @@ fn an_unrecognised_status_is_a_malformed_response_with_the_rungs_body_detail() {
     );
     let groq = ProviderLadder::single(ProviderId::Groq, Arc::new(groq_rung(&groq_http)));
     assert_eq!(
-        groq.translate(&translation_request("Xin chào")).unwrap_err(),
+        groq.translate(&translation_request("Xin chào"))
+            .unwrap_err(),
         ProviderError::MalformedResponse {
             provider: ProviderId::Groq,
             message: "Groq answered HTTP 400: json_object mode needs the word JSON".to_owned(),
@@ -2016,7 +2040,10 @@ fn a_transport_failure_maps_the_same_way_for_every_rung() {
     let offline_cases: Vec<(ProviderId, Arc<dyn TranslationProvider>)> = vec![
         (ProviderId::Azure, Arc::new(azure_rung(&unreachable()))),
         (ProviderId::Groq, Arc::new(groq_rung(&unreachable()))),
-        (ProviderId::MyMemory, Arc::new(my_memory_rung(&unreachable()))),
+        (
+            ProviderId::MyMemory,
+            Arc::new(my_memory_rung(&unreachable())),
+        ),
     ];
     let failed_cases: Vec<(ProviderId, Arc<dyn TranslationProvider>)> = vec![
         (ProviderId::Azure, Arc::new(azure_rung(&request_failed()))),
