@@ -74,9 +74,7 @@ impl LanguagePair {
     /// pair's partner, so every request carries a complete language pair.
     pub fn direction_for(&self, text: &str) -> Direction {
         let detected = guess_language(text);
-        let source = detected
-            .clone()
-            .unwrap_or_else(|| self.partner.clone());
+        let source = detected.clone().unwrap_or_else(|| self.partner.clone());
         let mut target = self.destination_for(detected.as_ref());
         if target == source {
             target = other_of_the_v1_pair(&source);

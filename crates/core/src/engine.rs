@@ -87,7 +87,7 @@ impl TranslatorEngine {
         })
     }
 
-    /// Replace: translate the Selection and overwrite it in one step (`⌃⌥R`).
+    /// Replace: translate the Selection and overwrite it in one step (`⌥⇧R`).
     ///
     /// A Selection that is only whitespace is nothing selected, so it is refused
     /// before a provider is consulted, history is written, or the app is asked
@@ -383,10 +383,7 @@ impl TranslatorEngine {
                 Ok(TextOutcome::Translation(Translation {
                     text: entry.result.clone(),
                     provider: entry.provider,
-                    detected_source: entry
-                        .direction
-                        .as_ref()
-                        .map(|known| known.source.clone()),
+                    detected_source: entry.direction.as_ref().map(|known| known.source.clone()),
                     source: direction.source,
                     target: direction.target,
                 }))

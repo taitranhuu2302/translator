@@ -24,6 +24,7 @@ import { ProviderSettings } from "./ProviderSettings";
 import { directionSentence } from "./settingsView";
 import { captureBinding, type KeyPress } from "./shortcuts";
 import { settingsWriter } from "./settingsWrite";
+import { UpdateSettings } from "./UpdateSettings";
 
 /** The four actions, named the way the engine names them in its messages. */
 const ACTIONS: { action: ShortcutAction; label: string; description: string }[] =
@@ -374,6 +375,13 @@ export function SettingsPane({
 
       <Section title="Providers">
         <ProviderSettings
+          settings={settings}
+          onSettingsSaved={onSettingsSaved}
+        />
+      </Section>
+
+      <Section title="Updates">
+        <UpdateSettings
           settings={settings}
           onSettingsSaved={onSettingsSaved}
         />

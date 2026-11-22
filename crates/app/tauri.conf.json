@@ -60,5 +60,13 @@
   "bundle": {
     "active": false,
     "icon": ["icons/icon.png"]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/taitranhuu2302/translator/releases/latest/download/latest.json"
+      ],
+      "pubkey": "PLACEHOLDER: run ./scripts/update-key.sh and paste the public key here"
+    }
   }
 }

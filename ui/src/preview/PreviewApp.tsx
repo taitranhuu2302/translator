@@ -279,8 +279,8 @@ export function PreviewApp() {
           onModeChange={switchMode}
           onOpenHistory={() => undefined}
           onOpenSettings={() => undefined}
-          translateShortcut="⌃⌥E"
-          replaceShortcut="⌃⌥R"
+          translateShortcut="⌥⇧E"
+          replaceShortcut="⌥⇧R"
         >
           {scene.id === "notices" ? (
             <NoticesScene />
@@ -300,7 +300,7 @@ export function PreviewApp() {
               onCopyPart={(_part: ImprovePart) => undefined}
               onSwap={() => undefined}
               canSwap={scene.state === "done"}
-              shortcut="⌃⌥E"
+              shortcut="⌥⇧E"
             />
           )}
 
@@ -406,7 +406,7 @@ function NoticesScene() {
         {NOTICES.map((notice) => (
           <NoticeView key={notice.title} notice={notice} />
         ))}
-        <CaptureNoticeView granted shortcut="⌃⌥E" notice={NOTICES[0]} />
+        <CaptureNoticeView granted shortcut="⌥⇧E" notice={NOTICES[0]} />
       </div>
     </div>
   );

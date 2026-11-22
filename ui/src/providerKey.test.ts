@@ -22,6 +22,7 @@ const settings: Settings = {
   start_at_login: false,
   azure_region: "westeurope",
   onboarding_seen: true,
+  auto_check_updates: true,
 };
 
 function status(overrides: Partial<ProviderStatus> = {}): ProviderStatus {

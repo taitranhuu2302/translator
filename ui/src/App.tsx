@@ -37,7 +37,7 @@ import {
   type TranslateResult,
 } from "./translateWindow";
 
-const FALLBACK_SHORTCUT = "Ctrl+Alt+E";
+const FALLBACK_SHORTCUT = "Alt+Shift+E";
 
 /** How many recent entries the History sheet loads. It is a cap, not a page
  * size: v1 shows recent history, and the search narrows what was loaded. */
@@ -418,7 +418,7 @@ export function App() {
     settings?.shortcuts.translate_window ?? FALLBACK_SHORTCUT,
   );
   const replaceShortcut = formatShortcut(
-    settings?.shortcuts.replace ?? "Ctrl+Alt+R",
+    settings?.shortcuts.replace ?? "Alt+Shift+R",
   );
 
   const finishOnboarding = async () => {

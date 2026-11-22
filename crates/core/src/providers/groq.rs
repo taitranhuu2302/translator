@@ -217,10 +217,8 @@ impl TranslationProvider for GroqProvider {
             .execute(&http_request)
             .map_err(|error| failure::transport(&FAILURES, error))?;
         if !(200..=299).contains(&response.status) {
-            return Err(
-                failure::status(&FAILURES, response.status, &response.body)
-                    .expect("Groq's failure policy settles every non-success status"),
-            );
+            return Err(failure::status(&FAILURES, response.status, &response.body)
+                .expect("Groq's failure policy settles every non-success status"));
         }
         let answer: ChatAnswer = serde_json::from_str(&response.body).map_err(|error| {
             FAILURES.malformed(format!("the answer was not the expected shape: {error}"))
@@ -314,18 +312,14 @@ impl TranslationProvider for GroqProvider {
         }
 
         if !(200..=299).contains(&status) {
-            return Err(
-                failure::status(&FAILURES, status, &raw)
-                    .expect("Groq's failure policy settles every non-success status"),
-            );
+            return Err(failure::status(&FAILURES, status, &raw)
+                .expect("Groq's failure policy settles every non-success status"));
         }
         if let Some(message) = failure {
             return Err(FAILURES.malformed(message));
         }
         if !saw_done && finished.is_none() {
-            return Err(FAILURES.malformed(
-                "the stream ended before the model finished the answer",
-            ));
+            return Err(FAILURES.malformed("the stream ended before the model finished the answer"));
         }
         match finished.as_deref() {
             Some("stop") | None => {}
@@ -335,17 +329,18 @@ impl TranslationProvider for GroqProvider {
                 ))
             }
             Some(other) => {
-                return Err(FAILURES.malformed(format!(
-                    "the model stopped without an answer ({other})"
-                )))
+                return Err(
+                    FAILURES.malformed(format!("the model stopped without an answer ({other})"))
+                )
             }
         }
 
         // The accumulated document is the authority. The deltas were only there
         // to show progress; a stream that never produced valid JSON with two
         // non-empty fields is a failure, not a partial answer.
-        let improvement: Improvement = serde_json::from_str(&document)
-            .map_err(|error| FAILURES.malformed(format!("the answer was not the expected JSON: {error}")))?;
+        let improvement: Improvement = serde_json::from_str(&document).map_err(|error| {
+            FAILURES.malformed(format!("the answer was not the expected JSON: {error}"))
+        })?;
         if improvement.corrected.trim().is_empty() {
             return Err(FAILURES.malformed("the answer carried an empty corrected field"));
         }

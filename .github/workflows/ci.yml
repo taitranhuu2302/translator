@@ -1,0 +1,77 @@
+name: CI
+
+# Nothing is gated: `main` keeps its direct-merge flow (ADR-0008). CI exists
+# so the rules a script enforces run without a human, and so `translator-core`
+# is exercised off macOS before the Windows port lands.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: macOS suite
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install the workspace
+        run: npm ci --no-audit --no-fund
+
+      # Formatting is its own check so a drift fails with the diff, before the
+      # suite spends minutes building. The tree is kept clean by a
+      # formatting-only commit, never by the workflow rewriting files.
+      - name: Formatting
+        run: cargo fmt --check
+
+      # check-identity.sh reads packaging/Info.plist and Cargo.toml only, so
+      # this runs with no signing certificate in the keychain.
+      - name: Suite
+        run: ./scripts/test.sh
+
+  windows:
+    name: Windows portable half
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install the workspace
+        run: npm ci --no-audit --no-fund
+
+      # The shell crates are AppKit/PlistBuddy-bound until the port lands, so
+      # only the frontend and the engine cross-compile here. The IPC boundary
+      # check is a grep over the UI source and rides along with the build.
+      - name: Typecheck
+        run: npm --prefix ui run typecheck
+
+      - name: UI tests
+        run: npm --prefix ui run test
+
+      - name: Core tests
+        run: cargo test -p translator-core

@@ -1,4 +1,4 @@
-//! The Replace HUD: the small capsule that says what `⌃⌥R` is doing while it
+//! The Replace HUD: the small capsule that says what `⌥⇧R` is doing while it
 //! runs.
 //!
 //! It is the shell's second `NSPanel`. Unlike the popup it is never a surface

@@ -1097,8 +1097,7 @@ mod tests {
     #[test]
     fn a_refused_registration_is_reported_with_the_existing_wording_and_changes_nothing() {
         let calls = calls();
-        let registry =
-            FakeKeyRegistry::refusing(calls.clone(), &["Ctrl+Alt+R"], &["Ctrl+Alt+M"]);
+        let registry = FakeKeyRegistry::refusing(calls.clone(), &["Ctrl+Alt+R"], &["Ctrl+Alt+M"]);
         let route =
             FakeShortcutRoute::holding(calls.clone(), &[(ShortcutAction::Replace, "Ctrl+Alt+R")]);
         let store = FakeShortcutStore::holding(calls.clone(), Settings::default());
@@ -1134,9 +1133,9 @@ mod tests {
     #[test]
     fn a_refused_save_puts_the_old_registration_and_route_back() {
         let calls = calls();
-        let registry = FakeKeyRegistry::holding(calls.clone(), &["Ctrl+Alt+R"]);
+        let registry = FakeKeyRegistry::holding(calls.clone(), &["Alt+Shift+R"]);
         let route =
-            FakeShortcutRoute::holding(calls.clone(), &[(ShortcutAction::Replace, "Ctrl+Alt+R")]);
+            FakeShortcutRoute::holding(calls.clone(), &[(ShortcutAction::Replace, "Alt+Shift+R")]);
         let store = FakeShortcutStore::refusing_save(calls.clone(), Settings::default());
 
         let outcome = rebind_shortcut(
@@ -1152,12 +1151,12 @@ mod tests {
             log(&calls),
             vec![
                 Call::Register(spelled("Ctrl+Alt+M")),
-                Call::Unregister(spelled("Ctrl+Alt+R")),
+                Call::Unregister(spelled("Alt+Shift+R")),
                 Call::Route(ShortcutAction::Replace, Some(parse("Ctrl+Alt+M"))),
                 Call::Save(settings_with_replace("Ctrl+Alt+M")),
                 Call::Unregister(spelled("Ctrl+Alt+M")),
-                Call::Register(spelled("Ctrl+Alt+R")),
-                Call::Route(ShortcutAction::Replace, Some(parse("Ctrl+Alt+R"))),
+                Call::Register(spelled("Alt+Shift+R")),
+                Call::Route(ShortcutAction::Replace, Some(parse("Alt+Shift+R"))),
             ]
         );
         assert_eq!(
@@ -1166,10 +1165,10 @@ mod tests {
         );
         assert!(!outcome.applied);
         assert_eq!(outcome.settings, Settings::default());
-        assert_eq!(registry.live_bindings(), vec![spelled("Ctrl+Alt+R")]);
+        assert_eq!(registry.live_bindings(), vec![spelled("Alt+Shift+R")]);
         assert_eq!(
             route.routes()[slot(ShortcutAction::Replace)],
-            Some(parse("Ctrl+Alt+R"))
+            Some(parse("Alt+Shift+R"))
         );
         assert_eq!(store.current(), Settings::default());
     }
@@ -1177,9 +1176,9 @@ mod tests {
     #[test]
     fn a_plan_that_changes_nothing_does_not_touch_a_port() {
         let calls = calls();
-        let registry = FakeKeyRegistry::holding(calls.clone(), &["Ctrl+Alt+R"]);
+        let registry = FakeKeyRegistry::holding(calls.clone(), &["Alt+Shift+R"]);
         let route =
-            FakeShortcutRoute::holding(calls.clone(), &[(ShortcutAction::Replace, "Ctrl+Alt+R")]);
+            FakeShortcutRoute::holding(calls.clone(), &[(ShortcutAction::Replace, "Alt+Shift+R")]);
         let store = FakeShortcutStore::holding(calls.clone(), Settings::default());
 
         let outcome = rebind_shortcut(
@@ -1187,11 +1186,11 @@ mod tests {
             &route,
             &store,
             ShortcutAction::Replace,
-            "Ctrl+Alt+R",
+            "Alt+Shift+R",
         )
         .expect("the settings file is readable");
 
-        assert_eq!(outcome.binding, "Ctrl+Alt+R");
+        assert_eq!(outcome.binding, "Alt+Shift+R");
         assert_eq!(outcome.problem, None);
         assert!(!outcome.applied);
         assert!(log(&calls).is_empty(), "an unchanged plan touched a port");
@@ -1210,7 +1209,7 @@ mod tests {
             &route,
             &store,
             ShortcutAction::QuickTranslate,
-            "Ctrl+Alt+R",
+            "Alt+Shift+R",
         )
         .expect("the settings file is readable");
 
@@ -1257,12 +1256,7 @@ mod tests {
         };
         let registry = FakeKeyRegistry::holding(
             calls.clone(),
-            &[
-                "Cmd+Shift+K",
-                "Cmd+Shift+Q",
-                "Cmd+Shift+S",
-                "Cmd+Shift+W",
-            ],
+            &["Cmd+Shift+K", "Cmd+Shift+Q", "Cmd+Shift+S", "Cmd+Shift+W"],
         );
         let route = FakeShortcutRoute::holding(
             calls.clone(),
@@ -1319,10 +1313,9 @@ mod tests {
     #[test]
     fn resetting_reports_a_shipped_binding_the_system_refuses() {
         let calls = calls();
-        let registry =
-            FakeKeyRegistry::refusing(calls.clone(), &["Ctrl+Alt+R"], &["Ctrl+Alt+R"]);
+        let registry = FakeKeyRegistry::refusing(calls.clone(), &["Alt+Shift+R"], &["Alt+Shift+R"]);
         let route =
-            FakeShortcutRoute::holding(calls.clone(), &[(ShortcutAction::Replace, "Ctrl+Alt+R")]);
+            FakeShortcutRoute::holding(calls.clone(), &[(ShortcutAction::Replace, "Alt+Shift+R")]);
         let store = FakeShortcutStore::holding(calls.clone(), Settings::default());
 
         let outcome =
@@ -1335,9 +1328,7 @@ mod tests {
             .expect("Replace's outcome");
         assert_eq!(
             replace.problem.as_deref(),
-            Some(
-                "macOS would not give Neris Ctrl+Alt+R. Another app may already be using it."
-            )
+            Some("macOS would not give Neris Alt+Shift+R. Another app may already be using it.")
         );
         assert_eq!(
             route.routes()[slot(ShortcutAction::Replace)],

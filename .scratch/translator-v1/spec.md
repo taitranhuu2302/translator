@@ -16,10 +16,10 @@ The project itself has a second problem: it is written in Swift against AppKit, 
 
 A macOS menu-bar app that acts on the Selection in whatever app is focused, through four global shortcuts:
 
-- **Quick Translate** (`⌃⌥D`) reads the Selection, shows a small popup next to the cursor with the translation, and lets the user press Enter to Replace the Selection.
-- **Replace** (`⌃⌥R`) translates and Replaces in one step, with no confirmation.
-- **Read Aloud** (`⌃⌥S`) speaks the Selection in the system voice. It never speaks a translation.
-- **Translate Window** (`⌃⌥E`) opens a two-pane window with the text on one side and the translation or improvement on the other, with a `Translate | Improve` switch.
+- **Quick Translate** (`⌥⇧D`) reads the Selection, shows a small popup next to the cursor with the translation, and lets the user press Enter to Replace the Selection.
+- **Replace** (`⌥⇧R`) translates and Replaces in one step, with no confirmation.
+- **Read Aloud** (`⌥⇧S`) speaks the Selection in the system voice. It never speaks a translation.
+- **Translate Window** (`⌥⇧E`) opens a two-pane window with the text on one side and the translation or improvement on the other, with a `Translate | Improve` switch.
 
 Direction is inferred from the Language Pair: if the Selection is already in the Target language, it is translated into the other member; otherwise into the Target.
 
@@ -29,12 +29,12 @@ Underneath, the product logic moves into a Rust core with no platform dependency
 
 ## User Stories
 
-1. As someone writing an email, I want to select a Vietnamese sentence and press `⌃⌥D`, so that I see the English translation beside my cursor without leaving the compose window.
+1. As someone writing an email, I want to select a Vietnamese sentence and press `⌥⇧D`, so that I see the English translation beside my cursor without leaving the compose window.
 2. As someone who just selected text, I want the popup to appear without taking focus, so that my caret stays exactly where I was typing.
 3. As someone happy with the translation, I want to press Enter to Replace the Selection, so that I never touch the clipboard myself.
-4. As someone in a hurry, I want `⌃⌥R` to translate and Replace in one step, so that I skip the confirmation.
+4. As someone in a hurry, I want `⌥⇧R` to translate and Replace in one step, so that I skip the confirmation.
 5. As someone who selected English text while my Target is English, I want the app to translate into the other member of the pair, so that I don't have to flip a setting.
-6. As someone reading an English article, I want to select a word and press `⌃⌥S`, so that I hear it pronounced.
+6. As someone reading an English article, I want to select a word and press `⌥⇧S`, so that I hear it pronounced.
 7. As someone learning English, I want Read Aloud to speak only the original Selection and never the translation, so that I hear the pronunciation I am trying to learn.
 8. As someone using Chrome, VS Code, or Terminal, I want Quick Translate to still work when the app does not expose its Selection through Accessibility, so that the shortcut is not silently broken in half my apps.
 9. As someone whose text had to be read through the clipboard, I want my previous clipboard contents restored, so that I don't lose what I had copied.
@@ -47,7 +47,7 @@ Underneath, the product logic moves into a Rust core with no platform dependency
 16. As someone translating a long paragraph, I want it split into chunks transparently, so that long text still translates instead of failing.
 17. As someone who translates the same sentence twice, I want the second lookup to be instant, so that I don't spend quota on a repeat.
 18. As someone who pressed the wrong shortcut, I want Escape to dismiss the popup without changing anything, so that a mistake costs nothing.
-19. As someone translating more than a sentence, I want `⌃⌥E` to open the Translate Window, so that I get a real editor instead of a popup.
+19. As someone translating more than a sentence, I want `⌥⇧E` to open the Translate Window, so that I get a real editor instead of a popup.
 20. As someone comparing languages, I want the Translate Window split into two panes, so that the source and the result sit side by side.
 21. As someone writing English, I want an Improve mode, so that I get both a corrected version and a better version of my sentence.
 22. As someone using Improve, I want the corrected and improved versions clearly separated, so that I can copy the one I want.
@@ -107,7 +107,7 @@ Underneath, the product logic moves into a Rust core with no platform dependency
 
 **Storage.** API keys in the Keychain, one item per provider. History in SQLite under Application Support, holding both sides of every translation, the provider, the mode, and a timestamp; rows older than 30 days are purged at launch and once a day. The Language Pair, shortcut bindings and the start-at-login preference live in a local settings file that is not synced.
 
-**Shortcuts.** `⌃⌥D`, `⌃⌥R`, `⌃⌥S`, `⌃⌥E`, registered through Carbon so that no Input Monitoring permission is needed. Bindings are user-editable and persisted; a binding that cannot be registered surfaces a conflict rather than failing silently.
+**Shortcuts.** `⌥⇧D`, `⌥⇧R`, `⌥⇧S`, `⌥⇧E`, registered through Carbon so that no Input Monitoring permission is needed. Bindings are user-editable and persisted; a binding that cannot be registered surfaces a conflict rather than failing silently.
 
 **UI.** React with TypeScript, Vite, Tailwind, and shadcn components for the Translate Window, settings, and onboarding. The popup uses the same design tokens but is deliberately built from minimal primitives: a dialog stack that traps focus is useful there, but nothing in the popup may depend on behaviour that activates the app. The visual language previously expressed in SwiftUI is re-created in Tailwind rather than carried over component by component.
 

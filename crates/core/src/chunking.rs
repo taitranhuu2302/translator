@@ -67,7 +67,20 @@ fn split_point(text: &str, limit: usize) -> usize {
 fn is_sentence_end(character: char) -> bool {
     matches!(
         character,
-        '.' | '!' | '?' | '…' | '。' | '！' | '？' | '؛' | '।' | '"' | '\'' | '”' | '’' | ')' | ']'
+        '.' | '!'
+            | '?'
+            | '…'
+            | '。'
+            | '！'
+            | '？'
+            | '؛'
+            | '।'
+            | '"'
+            | '\''
+            | '”'
+            | '’'
+            | ')'
+            | ']'
     )
 }
 

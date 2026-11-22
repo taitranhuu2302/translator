@@ -23,16 +23,17 @@ const saved: Settings = {
   start_at_login: false,
   azure_region: "westeurope",
   onboarding_seen: true,
+  auto_check_updates: true,
 };
 
 /** What a reset writes: the shipped shortcuts and pair, every other field kept. */
 const shipped: Settings = {
   ...saved,
   shortcuts: {
-    quick_translate: "Ctrl+Alt+D",
-    replace: "Ctrl+Alt+R",
-    read_aloud: "Ctrl+Alt+S",
-    translate_window: "Ctrl+Alt+E",
+    quick_translate: "Alt+Shift+D",
+    replace: "Alt+Shift+R",
+    read_aloud: "Alt+Shift+S",
+    translate_window: "Alt+Shift+E",
   },
 };
 
@@ -225,6 +226,55 @@ describe("changing the Azure region", () => {
     expect(calls.saves).toEqual([]);
     expect(mirroredSettings(outcome)).toEqual(saved);
     expect(settingsNotice(outcome)).toBeNull();
+  });
+});
+
+describe("changing the automatic update check", () => {
+  it("saves the whole settings object and says the checks are off", async () => {
+    const { writer, calls } = harness();
+
+    const outcome = await writer.change({
+      kind: "auto_check_updates",
+      enabled: false,
+    });
+
+    const expected: Settings = { ...saved, auto_check_updates: false };
+    expect(mirroredSettings(outcome)).toEqual(expected);
+    expect(calls.saves).toEqual([expected]);
+    expect(settingsNotice(outcome)).toBe(
+      "Automatic update checks turned off.",
+    );
+  });
+
+  it("says nothing and saves nothing when the setting already has that value", async () => {
+    const { writer, calls } = harness();
+
+    const outcome = await writer.change({
+      kind: "auto_check_updates",
+      enabled: true,
+    });
+
+    expect(calls.saves).toEqual([]);
+    expect(mirroredSettings(outcome)).toEqual(saved);
+    expect(settingsNotice(outcome)).toBeNull();
+  });
+
+  it("does not mirror a setting that could not be saved", async () => {
+    const { writer } = harness({
+      save: async () => {
+        throw new Error("the settings file refused");
+      },
+    });
+
+    const outcome = await writer.change({
+      kind: "auto_check_updates",
+      enabled: false,
+    });
+
+    expect(outcome.mirror).toBeNull();
+    expect(outcome).toMatchObject({
+      problem: "The setting could not be saved.",
+    });
   });
 });
 

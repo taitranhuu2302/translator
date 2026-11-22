@@ -24,7 +24,7 @@ const MODIFIER_GLYPHS: Record<string, string> = {
 };
 
 /**
- * "Ctrl+Alt+E" → "⌃⌥E". Bindings are stored as display strings until ticket 10
+ * "Alt+Shift+E" → "⌥⇧E". Bindings are stored as display strings until ticket 10
  * lets the user rebind them; this is the one place they become macOS glyphs.
  */
 export function formatShortcut(binding: string): string {

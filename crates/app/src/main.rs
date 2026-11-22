@@ -8,6 +8,7 @@ mod main_thread;
 mod panel;
 mod shortcuts;
 mod tray;
+mod updates;
 mod workflows;
 
 use std::path::PathBuf;
@@ -24,9 +25,8 @@ use translator_core::{
     AzureProvider, CachedProvider, CaptureError, Direction, EngineError, GroqProvider,
     HistoryEntry, ImproveDelta, ImprovePart, Mode, MyMemoryProvider, PopupPrefill, ProviderId,
     ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud, ReplacePhase, Replacement,
-    Selection, Settings,
-    SettingsStore, ShortcutBindings, SpeechError, TextOutcome, Translation, TranslatorEngine,
-    UreqHttpClient,
+    Selection, Settings, SettingsStore, ShortcutBindings, SpeechError, TextOutcome, Translation,
+    TranslatorEngine, UreqHttpClient,
 };
 use translator_platform_macos::{
     clipboard, migrate_legacy_state, MacCredentialStore, MacHistoryStore, MacSelectionCapture,
@@ -61,6 +61,10 @@ struct AppState {
     /// same Selection. It also carries the HUD that says what the Replace is
     /// doing.
     replace: Mutex<Option<hud::ReplaceHud>>,
+    /// The in-app update: what it is doing, and what wakes its six-hourly check
+    /// when the preference changes. It is `disabled` in a build without the
+    /// `updater` feature, which is every local build.
+    updates: updates::Updates,
 }
 
 impl AppState {
@@ -214,7 +218,7 @@ async fn replace_selection(
     state: State<'_, AppState>,
 ) -> Result<Replacement, EngineError> {
     let engine = Arc::clone(&state.engine);
-    // No popup is part of this path — `⌃⌥R` translates and replaces without one
+    // No popup is part of this path — `⌥⇧R` translates and replaces without one
     // — so the workflow has nothing to hide or bring back. The HUD is armed for
     // every Replace, whichever surface asked for it.
     if !state.begin_replace(&app, ReplacePhase::Capturing) {
@@ -244,9 +248,7 @@ fn replace_result(outcome: workflows::ReplaceOutcome) -> Result<Replacement, Eng
         workflows::ReplaceOutcome::Replaced(replacement) => Ok(replacement),
         workflows::ReplaceOutcome::Failed { error, restore } => {
             if let workflows::PopupRestore::Failed(problem) = restore {
-                eprintln!(
-                    "Neris: the popup could not be shown after a failed Replace: {problem}"
-                );
+                eprintln!("Neris: the popup could not be shown after a failed Replace: {problem}");
             }
             Err(error)
         }
@@ -388,8 +390,54 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Settings, EngineErro
 }
 
 #[tauri::command]
-async fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<(), EngineError> {
-    state.engine.save_settings(settings)
+async fn save_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: Settings,
+) -> Result<(), EngineError> {
+    // A change to the update preference cuts the updater's six-hour sleep short,
+    // so turning auto-check off stops the next check and turning it on checks
+    // now. Every other save leaves the schedule alone.
+    let before = state
+        .engine
+        .settings()
+        .map(|settings| settings.auto_check_updates)
+        .unwrap_or(true);
+    // The shortcut-default marker is the engine's, not the view's: a settings
+    // object built without it must not read as a file from before the upgrade,
+    // or the next launch would move a binding the user has since chosen.
+    let mut settings = settings;
+    settings.shortcuts_version = Settings::SHORTCUT_DEFAULTS_VERSION;
+    state.engine.save_settings(settings.clone())?;
+    if before != settings.auto_check_updates {
+        updates::preference_changed(&app);
+    }
+    Ok(())
+}
+
+/// The update as the shell holds it now. Every surface starts from this and then
+/// follows the `update-status` event.
+#[tauri::command]
+async fn update_status(state: State<'_, AppState>) -> Result<updates::UpdateStatus, ()> {
+    Ok(state.updates.status())
+}
+
+/// Check now, whatever the auto-check preference says, and download whatever is
+/// found. A check already in flight, or an update already waiting for a
+/// restart, is answered as it stands.
+#[tauri::command]
+async fn check_for_updates(app: AppHandle) -> Result<updates::UpdateStatus, ()> {
+    Ok(updates::check_now(&app).await)
+}
+
+/// Restart into the update waiting for it. Refused unless one is ready, so a
+/// stale button can never restart the app for nothing.
+#[tauri::command]
+async fn restart_to_update(app: AppHandle) -> Result<(), ()> {
+    if updates::status(&app).state != updates::UpdateState::Ready {
+        return Err(());
+    }
+    updates::restart(&app)
 }
 
 #[tauri::command]
@@ -444,10 +492,9 @@ async fn replace_hud_phase(state: State<'_, AppState>) -> Result<Option<ReplaceP
 /// card simply keeps the height it had.
 #[tauri::command]
 async fn set_popup_height(app: AppHandle, height: f64) -> Result<(), ()> {
-    let scheduled = main_thread::on_main_thread(&app, move |handle| {
-        panel::set_height(handle, height)
-    })
-    .ok_or(())?;
+    let scheduled =
+        main_thread::on_main_thread(&app, move |handle| panel::set_height(handle, height))
+            .ok_or(())?;
     scheduled.map_err(|_| ())
 }
 
@@ -470,12 +517,7 @@ async fn accessibility_granted(app: AppHandle, state: State<'_, AppState>) -> Re
         changed
     };
     if changed {
-        let bindings = state
-            .engine
-            .settings()
-            .map(|settings| settings.shortcuts)
-            .unwrap_or_default();
-        tray::refresh_tray(&app, &bindings);
+        tray::refresh_tray(&app);
     }
     Ok(granted)
 }
@@ -693,7 +735,7 @@ fn read_aloud_selection(app: &AppHandle) {
     });
 }
 
-/// Replace (`⌃⌥R`): capture, translate and write in one step, off the main
+/// Replace (`⌥⇧R`): capture, translate and write in one step, off the main
 /// thread so a slow provider never freezes the app. It runs through the same
 /// workflow as the popup's Replace, with no popup to hide or restore. There is
 /// no popup to carry a failure either, so every typed failure gets a dialog — a
@@ -801,7 +843,7 @@ async fn rebind_shortcut(
     };
     if outcome.applied {
         app.state::<AppState>().forget_conflict(action);
-        tray::refresh_tray(&app, &outcome.settings.shortcuts);
+        tray::refresh_tray(&app);
     }
     Ok(shortcuts::RebindResult {
         binding: outcome.binding,
@@ -834,7 +876,7 @@ async fn reset_shortcuts_and_language_pair(
         }
     };
     app.state::<AppState>().clear_conflicts();
-    tray::refresh_tray(&app, &outcome.settings.shortcuts);
+    tray::refresh_tray(&app);
     Ok(outcome)
 }
 
@@ -880,14 +922,16 @@ fn run_action(app: &AppHandle, action: shortcuts::ShortcutAction) {
 }
 
 /// A tray row was clicked. The four action rows fire the same handlers as the
-/// global shortcuts; the accessibility row opens the pane where the permission
-/// is granted; Quit exits.
+/// global shortcuts; the update row restarts into the update that is already
+/// installed; the accessibility row opens the pane where the permission is
+/// granted; Quit exits.
 fn handle_tray_event(app: &AppHandle, id: &str) {
     if let Some(action) = tray::action_for_id(id) {
         run_action(app, action);
         return;
     }
     match id {
+        tray::INSTALL_UPDATE_ID => updates::restart(app),
         tray::ACCESSIBILITY_NOT_GRANTED_ID => {
             if let Err(error) = app.state::<AppState>().engine.open_accessibility_settings() {
                 eprintln!("Neris: Accessibility settings could not be opened: {error}");
@@ -898,10 +942,12 @@ fn handle_tray_event(app: &AppHandle, id: &str) {
     }
 }
 
-/// Build the menu bar item from the live bindings and the permission macOS
-/// reports now. Later changes go through `tray::refresh_tray`.
+/// Build the menu bar item from the live bindings, the permission macOS reports
+/// now and the update waiting for a restart. Later changes go through
+/// `tray::refresh_tray`.
 fn build_tray(app: &AppHandle, bindings: &ShortcutBindings, granted: bool) -> tauri::Result<()> {
-    let menu = tray::menu(app, bindings, granted)?;
+    let update = updates::ready_version(app);
+    let menu = tray::menu(app, bindings, granted, update.as_deref())?;
 
     // A template image: macOS draws it in the menu bar's own foreground colour,
     // so it stays legible in both appearances. It is drawn at 18 pt, and the
@@ -931,7 +977,9 @@ fn main() {
             );
         }
         Ok(MigrationOutcome::NotNeeded) => {}
-        Err(error) => eprintln!("Neris: the previous version's state was not carried over: {error}"),
+        Err(error) => {
+            eprintln!("Neris: the previous version's state was not carried over: {error}")
+        }
     }
 
     // Azure F0 first when a key is stored, then the keyless provider. Both sit
@@ -972,7 +1020,7 @@ fn main() {
         credentials,
     );
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_autostart::Builder::new()
@@ -991,7 +1039,13 @@ fn main() {
                     }
                 })
                 .build(),
-        )
+        );
+    // Release builds only: without it the app reports updates as disabled and
+    // can never replace itself (crates/app/Cargo.toml's `updater` feature).
+    #[cfg(feature = "updater")]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+
+    builder
         .manage(AppState {
             engine: Arc::new(engine),
             settings: settings_store,
@@ -1001,6 +1055,7 @@ fn main() {
             launch_conflicts: Mutex::new(Vec::new()),
             accessibility: Mutex::new(false),
             replace: Mutex::new(None),
+            updates: updates::Updates::new(),
         })
         .invoke_handler(tauri::generate_handler![
             quick_translate,
@@ -1030,7 +1085,10 @@ fn main() {
             reset_shortcuts_and_language_pair,
             shortcut_conflicts,
             start_at_login_enabled,
-            set_start_at_login
+            set_start_at_login,
+            update_status,
+            check_for_updates,
+            restart_to_update
         ])
         .setup(|app| {
             // Menu-bar only: the app never takes a Dock icon or a place in ⌘Tab.
@@ -1050,6 +1108,11 @@ fn main() {
                 .accessibility
                 .lock()
                 .expect("accessibility lock") = granted;
+
+            // The updater starts once the tray exists: its first turn is the
+            // launch check, and a ready update adds a row to that tray. It runs
+            // on its own thread, so the check never delays the first shortcut.
+            updates::start(app.handle());
 
             // The popup window exists from startup (hidden) and is converted
             // once. Losing key is the dismissal gesture: clicking anywhere else
