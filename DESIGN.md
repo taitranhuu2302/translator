@@ -22,7 +22,7 @@
 | Asset | File | Use |
 | --- | --- | --- |
 | Lockup — mark and wordmark | `docs/assets/neris-lockup.png` | README and external material |
-| App icon source | `crates/app/icons/icon.svg`, rendered to a 1024 px `icon.png` | Bundle icon, packaged as `Neris.icns` |
+| App icon source | `crates/app/icons/icon.svg`, rendered to a 1024 px `icon.png` (8-bit RGBA — Tauri embeds the rows raw) | Bundle icon, packaged as `Neris.icns` |
 | Menu bar mark | `crates/app/icons/tray-template.svg`, rendered to `tray-template.png` | Status item, set `icon_as_template(true)` |
 | In-app mark | `ui/src/components/NerisMark.tsx` | Onboarding and the Settings header |
 
