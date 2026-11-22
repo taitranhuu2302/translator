@@ -19,12 +19,9 @@ import {
   type ShortcutAction,
   type ShortcutStatus,
 } from "./ipc";
+import { languageName, OFFERED_LANGUAGES } from "./languageLabel";
 import { ProviderSettings } from "./ProviderSettings";
-import {
-  directionSentence,
-  languageName,
-  OFFERED_LANGUAGES,
-} from "./settingsView";
+import { directionSentence } from "./settingsView";
 import { captureBinding, type KeyPress } from "./shortcuts";
 import { settingsWriter } from "./settingsWrite";
 

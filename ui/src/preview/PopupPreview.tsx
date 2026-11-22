@@ -31,6 +31,7 @@ const LONG_SOURCE =
 const SHORT_ANSWER: Translation = {
   text: "Our privacy policy has just been updated.",
   provider: "azure",
+  source: "vi",
   detected_source: "vi",
   target: "en",
 };
@@ -38,6 +39,7 @@ const SHORT_ANSWER: Translation = {
 const LONG_ANSWER: Translation = {
   text: "We have updated our privacy policy to explain more clearly what data is collected, how long it is kept, and which choices you have. The new policy takes effect on 1 December and replaces the version published last spring. Nothing about the way Neris itself works has changed: the text you select is still sent only to the provider you have configured, and nothing is stored on this Mac beyond your history. If you have questions, you can reply to the email that announced the change, and a person will answer.",
   provider: "azure",
+  source: "vi",
   detected_source: "vi",
   target: "en",
 };

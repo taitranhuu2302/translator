@@ -54,6 +54,7 @@ Văn bản dài là trường hợp đáng chú ý nhất: khung kết quả t�
 const TRANSLATION: Translation = {
   text: TRANSLATION_VI,
   provider: "azure",
+  source: "en",
   detected_source: "en",
   target: "vi",
 };
@@ -61,6 +62,7 @@ const TRANSLATION: Translation = {
 const TRANSLATION_LONG: Translation = {
   text: TRANSLATION_VI_LONG,
   provider: "my_memory",
+  source: "en",
   detected_source: "en",
   target: "vi",
 };

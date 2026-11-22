@@ -68,10 +68,10 @@ pub struct Direction {
 }
 
 impl LanguagePair {
-    /// Resolve the direction for `text`. Text already in the Target goes to the
-    /// partner; anything else goes to the Target. The source is the local guess
-    /// when there is one, otherwise the pair's implicit input language, so every
-    /// request carries a complete language pair.
+    /// Resolve the Direction for `text` from the pair and its Detection. Text
+    /// already in the Target goes to the partner; anything else goes to the
+    /// Target. The source is the local guess when there is one, otherwise the
+    /// pair's partner, so every request carries a complete language pair.
     pub fn direction_for(&self, text: &str) -> Direction {
         let detected = guess_language(text);
         let source = detected
@@ -95,10 +95,15 @@ fn other_of_the_v1_pair(language: &Language) -> Language {
     }
 }
 
-/// A lightweight guess at which language some text is written in, for picking a
-/// speech voice. It is not the provider ladder's detection (ticket 06): it reads
-/// Vietnamese letters and tone marks, calls the rest of the Latin alphabet
-/// English, and admits it cannot tell when the text carries no letter it knows.
+/// The app's own Detection: a lightweight reading of which language some text is
+/// written in, made before any request so the Direction can be chosen. Read
+/// Aloud uses the same guess to pick a speech voice. It is not a provider's
+/// detection: it reads Vietnamese letters and tone marks, calls the rest of the
+/// Latin alphabet English, and admits it cannot tell when the text carries no
+/// letter it knows, in which case the caller falls back to the pair's partner.
+///
+/// Unaccented Vietnamese (`toi di hoc`) carries no mark and is therefore read as
+/// English. That is a deliberate v1 boundary, not an oversight; see ADR-0008.
 pub fn guess_language(text: &str) -> Option<Language> {
     let mut saw_latin_letter = false;
     for character in text.chars() {

@@ -1,29 +1,19 @@
 /**
  * The Language Pair section's pure rules: one configured Target, the other
- * offered language as its implied partner, and the sentence that says which way
- * a translation will go. The component only draws them.
+ * offered language as its implied partner, and the sentence that says the pair
+ * works both ways. The component only draws them.
  */
 import type { Language, LanguagePair } from "./ipc";
-
-/** The two languages v1 offers. `Language` stays an open string in the model, so
- * a pair saved from outside still renders — by its own code. */
-export const OFFERED_LANGUAGES = [
-  { code: "en", name: "English" },
-  { code: "vi", name: "Vietnamese" },
-] as const;
+import { languageName } from "./languageLabel";
 
 /** The partner chosen for each offered Target. */
 const PARTNER_OF: Record<string, string> = { en: "vi", vi: "en" };
 
-export function languageName(code: Language): string {
-  return (
-    OFFERED_LANGUAGES.find((language) => language.code === code)?.name ?? code
-  );
-}
-
-/** The sentence under the Target select. */
+/** The sentence under the Target select. The pair is bidirectional: the Target
+ * decides what text in the partner becomes, and text already in the Target goes
+ * back to the partner. */
 export function directionSentence(pair: LanguagePair): string {
-  return `Translates from ${languageName(pair.partner)} into ${languageName(pair.target)}.`;
+  return `Translates both ways between ${languageName(pair.partner)} and ${languageName(pair.target)}.`;
 }
 
 /**

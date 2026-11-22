@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 
 import { providerLabel } from "../format";
 import { partLabel, type ImproveResult } from "../improveWindow";
+import { directionLabel } from "../languageLabel";
 import type { ImprovePart, Mode } from "../ipc";
 import { NoticeView } from "../NoticeView";
 import type { TranslateResult } from "../translateWindow";
@@ -122,7 +123,8 @@ export function TranslatePanes({
         <PaneHeader label={isImprove ? "Improved" : "Translation"}>
           {result.phase === "translated" ? (
             <span className="shrink-0 rounded-full bg-muted/70 px-2 py-0.5 text-[0.625rem] whitespace-nowrap text-muted-foreground">
-              via {providerLabel(result.translation.provider)}
+              {directionLabel(result.translation)} ·{" "}
+              {providerLabel(result.translation.provider)}
             </span>
           ) : null}
 

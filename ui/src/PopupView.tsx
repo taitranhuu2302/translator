@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { beginSession } from "./answerToken";
 import { providerLabel } from "./format";
 import { ipc, onPopupPrefill, type EngineError } from "./ipc";
+import { directionLabel } from "./languageLabel";
 import { performNoticeAction } from "./noticeActions";
 import { NoticeView } from "./NoticeView";
 import { OPENING, reduce } from "./popupState";
@@ -233,7 +234,7 @@ export function Popup() {
           </span>
           {answer ? (
             <span className="ml-auto truncate text-[0.6875rem] text-muted-foreground">
-              {providerLabel(answer.provider)}
+              {directionLabel(answer)} · {providerLabel(answer.provider)}
             </span>
           ) : null}
         </header>

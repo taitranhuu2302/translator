@@ -363,15 +363,22 @@ impl TranslatorEngine {
     /// Mac must cost no quota and must not duplicate the entry.
     ///
     /// A translation keeps the direction it was produced in. An older entry with
-    /// no known direction falls back to the saved pair's Target, which is what
-    /// any new translation would have used. An improvement returns both stored
-    /// parts, with an empty corrected part when an older row never had one.
+    /// no known direction falls back to the saved pair's partner and Target,
+    /// which is what any new translation would have used. An improvement returns
+    /// both stored parts, with an empty corrected part when an older row never
+    /// had one.
     pub fn reopen(&self, entry: &HistoryEntry) -> Result<TextOutcome, EngineError> {
         match entry.mode {
             Mode::Translate => {
-                let target = match &entry.direction {
-                    Some(direction) => direction.target.clone(),
-                    None => self.settings.load()?.language_pair.target,
+                let direction = match &entry.direction {
+                    Some(direction) => direction.clone(),
+                    None => {
+                        let pair = self.settings.load()?.language_pair;
+                        Direction {
+                            source: pair.partner,
+                            target: pair.target,
+                        }
+                    }
                 };
                 Ok(TextOutcome::Translation(Translation {
                     text: entry.result.clone(),
@@ -379,8 +386,9 @@ impl TranslatorEngine {
                     detected_source: entry
                         .direction
                         .as_ref()
-                        .map(|direction| direction.source.clone()),
-                    target,
+                        .map(|known| known.source.clone()),
+                    source: direction.source,
+                    target: direction.target,
                 }))
             }
             Mode::Improve => Ok(TextOutcome::Improvement(Improvement {
@@ -425,16 +433,18 @@ fn translate_in_direction(
     text: &str,
     direction: Direction,
 ) -> Result<Translation, crate::error::ProviderError> {
+    let Direction { source, target } = direction;
     let response = provider.translate(&TranslateRequest {
         text: text.to_owned(),
-        source: Some(direction.source),
-        target: direction.target.clone(),
+        source: Some(source.clone()),
+        target: target.clone(),
     })?;
     Ok(Translation {
         text: response.text,
         provider: response.provider,
         detected_source: response.detected_source,
-        target: direction.target,
+        source,
+        target,
     })
 }
 

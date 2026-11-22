@@ -115,6 +115,12 @@ export type PopupPrefill =
 export interface Translation {
   text: string;
   provider: ProviderId;
+  /** The language this text was translated from, as the engine resolved it
+   * before the request. Unlike `detected_source`, it is never a provider's
+   * opinion; it is the Direction the translation actually ran in. */
+  source: Language;
+  /** What the provider reported detecting, when it reports anything. Recorded,
+   * never used to choose the Direction. */
   detected_source: Language | null;
   target: Language;
 }

@@ -7,7 +7,7 @@
  * and the React component only draws state and calls the IPC seam.
  */
 import { isCurrent, type AnswerToken } from "./answerToken";
-import type { Direction, EngineError, LanguagePair, Translation } from "./ipc";
+import type { Direction, EngineError, Translation } from "./ipc";
 import { noticeFor, type Notice } from "./notice";
 
 export type TranslateResult =
@@ -63,25 +63,11 @@ export function reduceResult(
 /**
  * The direction the next translation runs in after Swap.
  *
- * The result text is already in `translation.target`, so reversing it means
- * asking for that language as the source. Its destination is the language the
- * text came from: the provider's detection when it named a member of the saved
- * pair, otherwise the pair's other member. Only the saved pair is read — Swap
- * never writes settings — and the rule never produces a language translated
- * into itself.
+ * The answer knows the direction it was produced in, so reversing it is a
+ * reversal of that value: the result's language becomes the source, and the
+ * language it came from becomes the target. Nothing is guessed from the saved
+ * pair or from a provider's reported detection, and Swap never writes settings.
  */
-export function swapDirection(
-  pair: LanguagePair,
-  translation: Translation,
-): Direction {
-  const source = translation.target;
-  const other = pair.target === source ? pair.partner : pair.target;
-  const detected = translation.detected_source;
-  const target =
-    detected !== null &&
-    detected !== source &&
-    (detected === pair.target || detected === pair.partner)
-      ? detected
-      : other;
-  return { source, target };
+export function swapDirection(translation: Translation): Direction {
+  return { source: translation.target, target: translation.source };
 }

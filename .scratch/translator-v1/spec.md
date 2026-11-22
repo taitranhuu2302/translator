@@ -101,7 +101,7 @@ Underneath, the product logic moves into a Rust core with no platform dependency
 
 **Chunking and caching.** MyMemory caps a request at 500 bytes and Vietnamese diacritics cost two to three bytes per character, so text is split on sentence boundaries into chunks that fit the budget, translated, and rejoined in order without loss. Both providers sit behind an in-memory LRU keyed by text and direction, so a repeated Selection never spends quota.
 
-**Direction resolution.** The Language Pair holds exactly one configured Target and one implied partner. A Selection already in the Target language is translated into the partner; anything else into the Target. Detection uses the provider's reported language when available and a lightweight local heuristic before the request.
+**Direction resolution.** The Language Pair holds exactly one configured Target and one implied partner. A Selection already in the Target language is translated into the partner; anything else into the Target. Detection is local and runs before the request; the provider's reported language is recorded but never chooses the direction ([ADR-0008](../../docs/adr/0008-local-direction-resolution.md)).
 
 **Improve contract.** Improve asks for exactly two labelled parts: a corrected sentence that preserves the author's meaning and register, and a better sentence that is more natural or concise. Both are returned as separate fields, never as prose the view has to parse, and malformed model output is a typed error rather than a blank pane.
 

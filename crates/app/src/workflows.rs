@@ -542,6 +542,7 @@ mod tests {
                 text: "Hello".to_owned(),
                 provider: ProviderId::MyMemory,
                 detected_source: None,
+                source: Language::vietnamese(),
                 target: Language::english(),
             },
         }

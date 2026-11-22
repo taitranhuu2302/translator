@@ -8,6 +8,7 @@ import { OPENING, reduce } from "./popupState";
 const translation: Translation = {
   text: "Hello world",
   provider: "my_memory",
+  source: "vi",
   detected_source: "vi",
   target: "en",
 };

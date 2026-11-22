@@ -296,6 +296,7 @@ fn the_popup_replace_writes_the_translation_the_user_saw_without_reading_again()
         text: "Hello".to_owned(),
         provider: ProviderId::MyMemory,
         detected_source: Some(Language::vietnamese()),
+        source: Language::vietnamese(),
         target: Language::english(),
     };
 
@@ -331,6 +332,7 @@ fn a_popup_replace_with_no_captured_selection_writes_nothing() {
         text: "Hello".to_owned(),
         provider: ProviderId::MyMemory,
         detected_source: None,
+        source: Language::vietnamese(),
         target: Language::english(),
     };
 
@@ -354,6 +356,7 @@ fn a_popup_replace_that_the_app_refuses_is_typed_and_records_no_history() {
         text: "Hello".to_owned(),
         provider: ProviderId::MyMemory,
         detected_source: None,
+        source: Language::vietnamese(),
         target: Language::english(),
     };
 
@@ -377,6 +380,7 @@ fn secure_input_refuses_a_popup_replace_before_anything_is_written() {
         text: "Hello".to_owned(),
         provider: ProviderId::MyMemory,
         detected_source: None,
+        source: Language::vietnamese(),
         target: Language::english(),
     };
 
@@ -1397,8 +1401,10 @@ fn a_normal_translation_in_each_direction_records_and_reopens_the_direction_it_u
 
     match (reopened_english, reopened_vietnamese) {
         (TextOutcome::Translation(english), TextOutcome::Translation(vietnamese)) => {
+            assert_eq!(english.source, Language::vietnamese());
             assert_eq!(english.target, Language::english());
             assert_eq!(english.detected_source, Some(Language::vietnamese()));
+            assert_eq!(vietnamese.source, Language::english());
             assert_eq!(vietnamese.target, Language::vietnamese());
             assert_eq!(
                 vietnamese.detected_source,
@@ -1588,6 +1594,7 @@ fn reopening_a_translation_uses_the_stored_result_and_direction_without_a_provid
             assert_eq!(translation.text, "Hello");
             assert_eq!(translation.provider, ProviderId::MyMemory);
             assert_eq!(translation.detected_source, Some(Language::vietnamese()));
+            assert_eq!(translation.source, Language::vietnamese());
             assert_eq!(translation.target, Language::english());
         }
         other => panic!("expected a translation, got {other:?}"),
@@ -1614,6 +1621,7 @@ fn reopening_a_translation_without_a_known_direction_uses_the_saved_target() {
 
     match outcome {
         TextOutcome::Translation(translation) => {
+            assert_eq!(translation.source, Language::vietnamese());
             assert_eq!(translation.target, Language::english());
             assert_eq!(translation.detected_source, None);
         }

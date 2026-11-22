@@ -51,12 +51,16 @@ pub struct ProviderTranslation {
     pub detected_source: Option<Language>,
 }
 
-/// A finished translation together with the direction it was resolved to.
+/// A finished translation together with the direction it ran in.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Translation {
     pub text: String,
     pub provider: ProviderId,
     pub detected_source: Option<Language>,
+    /// The language the text was translated from, as the engine resolved it
+    /// before the request. Unlike `detected_source`, this is never a provider's
+    /// opinion; it is what the Direction actually was.
+    pub source: Language,
     pub target: Language,
 }
 
