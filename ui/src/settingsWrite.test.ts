@@ -24,6 +24,7 @@ const saved: Settings = {
   azure_region: "westeurope",
   onboarding_seen: true,
   auto_check_updates: true,
+  save_history: false,
 };
 
 /** What a reset writes: the shipped shortcuts and pair, every other field kept. */
@@ -275,6 +276,53 @@ describe("changing the automatic update check", () => {
     expect(outcome).toMatchObject({
       problem: "The setting could not be saved.",
     });
+  });
+});
+
+describe("changing whether History is saved", () => {
+  it("saves the whole settings object and says new results will be kept", async () => {
+    const { writer, calls } = harness();
+
+    const outcome = await writer.change({
+      kind: "save_history",
+      enabled: true,
+    });
+
+    const expected: Settings = { ...saved, save_history: true };
+    expect(mirroredSettings(outcome)).toEqual(expected);
+    expect(calls.saves).toEqual([expected]);
+    expect(settingsNotice(outcome)).toBe(
+      "Translations and improvements will be saved to History.",
+    );
+  });
+
+  it("says the entries already saved stay when it is turned off", async () => {
+    const { writer, calls } = harness({
+      read: async () => ({ ...saved, save_history: true }),
+    });
+
+    const outcome = await writer.change({
+      kind: "save_history",
+      enabled: false,
+    });
+
+    expect(calls.saves).toEqual([{ ...saved, save_history: false }]);
+    expect(settingsNotice(outcome)).toBe(
+      "New translations and improvements will not be saved. Entries already saved stay.",
+    );
+  });
+
+  it("says nothing and saves nothing when the setting already has that value", async () => {
+    const { writer, calls } = harness();
+
+    const outcome = await writer.change({
+      kind: "save_history",
+      enabled: false,
+    });
+
+    expect(calls.saves).toEqual([]);
+    expect(mirroredSettings(outcome)).toEqual(saved);
+    expect(settingsNotice(outcome)).toBeNull();
   });
 });
 

@@ -48,6 +48,10 @@ export interface Settings {
   /** Whether a Release build looks for a newer Release at launch and every six
    * hours. A local build has no updater, so it changes nothing there. */
   auto_check_updates: boolean;
+  /** Whether finished translations and improvements are written to History.
+   * Off by default. Turning it off stops new rows only: entries already stored
+   * stay readable and searchable. */
+  save_history: boolean;
 }
 
 /** The four things a global shortcut can do. The spelling is the field name in
@@ -288,6 +292,19 @@ export const ipc = {
     direction?: Direction | null,
   ): Promise<TextOutcome> =>
     call("translate_text", { text, mode, direction: direction ?? null }),
+  /** The Direction a translation of `text` would run in, for naming it beside
+   * the input before the user submits. `null` means the local guess could not
+   * name a language. It is a label only: submitting resolves the direction
+   * again, so this never decides where text goes. */
+  detectDirection: (
+    text: string,
+    pair: LanguagePair,
+  ): Promise<Direction | null> =>
+    call("detect_direction", {
+      text,
+      target: pair.target,
+      partner: pair.partner,
+    }),
   /** Improve typed English and stream it back. The command returns once the
    * worker is started; the answer arrives as `translation-chunk`,
    * `translation-done` and `translation-error`, all tagged with the token's

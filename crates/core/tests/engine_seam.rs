@@ -35,6 +35,9 @@ impl Harness {
             history: InMemoryHistory::default(),
             settings: InMemorySettings::with(Settings {
                 language_pair: LanguagePair::new(Language::english(), Language::vietnamese()),
+                // Most tests below are about what a translation records, so the
+                // harness leaves History on; the shipped default is off.
+                save_history: true,
                 ..Settings::default()
             }),
             credentials: FakeCredentials::default(),
@@ -43,6 +46,16 @@ impl Harness {
 
     fn with_speech(mut self, speech: RecordingSpeech) -> Self {
         self.speech = speech;
+        self
+    }
+
+    /// The shipped default: History recording off.
+    fn without_history(mut self) -> Self {
+        self.settings = InMemorySettings::with(Settings {
+            language_pair: LanguagePair::new(Language::english(), Language::vietnamese()),
+            save_history: false,
+            ..Settings::default()
+        });
         self
     }
 
@@ -682,6 +695,7 @@ fn saving_a_blank_key_clears_the_stored_key_without_touching_the_settings_file()
         harness.settings.load().expect("settings load"),
         Settings {
             language_pair: LanguagePair::new(Language::english(), Language::vietnamese()),
+            save_history: true,
             ..Settings::default()
         },
         "the key never lands in the settings file"
@@ -1344,6 +1358,7 @@ fn a_normal_translation_in_each_direction_records_and_reopens_the_direction_it_u
     let mut into_vietnamese = Harness::new(FakeCapture::default(), undetected("Chào buổi sáng"));
     into_vietnamese.settings = InMemorySettings::with(Settings {
         language_pair: LanguagePair::new(Language::vietnamese(), Language::english()),
+        save_history: true,
         ..Settings::default()
     });
     into_vietnamese
@@ -1383,6 +1398,7 @@ fn a_normal_translation_in_each_direction_records_and_reopens_the_direction_it_u
     let mut english_reader = Harness::new(FakeCapture::default(), undetected("unused"));
     english_reader.settings = InMemorySettings::with(Settings {
         language_pair: LanguagePair::new(Language::vietnamese(), Language::english()),
+        save_history: true,
         ..Settings::default()
     });
     let reopened_english = english_reader
@@ -1527,6 +1543,84 @@ fn improve_through_the_window_records_once_too() {
     assert_eq!(entry.mode, Mode::Improve);
     assert_eq!(entry.result, "He's heading home.");
     assert_eq!(entry.corrected.as_deref(), Some("He is going home."));
+}
+
+#[test]
+fn with_history_off_no_surface_writes_a_row() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    )
+    .without_history();
+    let engine = harness.engine();
+
+    engine.quick_translate().expect("quick translate");
+    engine
+        .translate_text("Xin chào", Mode::Translate)
+        .expect("window translate");
+    engine
+        .translate_text_in(
+            "Hello",
+            Mode::Translate,
+            Some(Direction {
+                source: Language::english(),
+                target: Language::vietnamese(),
+            }),
+        )
+        .expect("swapped translate");
+
+    assert_eq!(harness.history.records(), 0);
+    assert!(harness.history.entries().is_empty());
+}
+
+#[test]
+fn with_history_off_an_improvement_writes_no_row() {
+    let harness = Harness::new(
+        FakeCapture::default(),
+        FakeProvider::streaming_improvement(
+            Improvement {
+                corrected: "He is going home.".to_owned(),
+                better: "He's heading home.".to_owned(),
+            },
+            Vec::new(),
+        ),
+    )
+    .without_history();
+    let engine = harness.engine();
+
+    engine
+        .translate_text("He go home.", Mode::Improve)
+        .expect("improve text");
+    engine
+        .improve_streaming("He go home.", &mut |_| {})
+        .expect("improve streaming");
+
+    assert_eq!(harness.history.records(), 0);
+    assert!(harness.history.entries().is_empty());
+}
+
+#[test]
+fn with_history_off_entries_already_written_stay_readable() {
+    let harness = Harness::new(
+        FakeCapture::with_selection("Xin chào"),
+        provider_saying("Hello"),
+    )
+    .without_history();
+    harness
+        .history
+        .record(&translation_entry(Some(Direction {
+            source: Language::vietnamese(),
+            target: Language::english(),
+        })))
+        .expect("seed a newer row");
+
+    let engine = harness.engine();
+    engine.quick_translate().expect("quick translate");
+    let kept = engine.history("", 10).expect("history stays readable");
+
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].source, "Xin chào");
+    assert_eq!(harness.history.records(), 1);
 }
 
 #[test]

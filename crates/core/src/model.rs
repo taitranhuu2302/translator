@@ -137,6 +137,12 @@ pub struct Settings {
     /// before the updater existed load as `true`, the shipped value.
     #[serde(default = "check_updates_by_default")]
     pub auto_check_updates: bool,
+    /// Whether finished translations and improvements are written to History.
+    /// Off by default, so nothing is kept unless the user asks for it. It only
+    /// stops new rows: entries already written stay readable and searchable, and
+    /// turning this off never deletes any of them.
+    #[serde(default = "save_history_by_default")]
+    pub save_history: bool,
     /// The version of the shipped shortcut defaults this file has been upgraded
     /// to. A file written before the defaults changed has no version and reads as
     /// 0, which is what asks for the one-time upgrade; `Default` starts at the
@@ -151,6 +157,12 @@ fn check_updates_by_default() -> bool {
     true
 }
 
+/// The shipped value: off. Both [`Settings::default`] and the serde default read
+/// it from here, so a fresh install and an old settings file agree.
+fn save_history_by_default() -> bool {
+    false
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -160,6 +172,7 @@ impl Default for Settings {
             azure_region: String::new(),
             onboarding_seen: false,
             auto_check_updates: check_updates_by_default(),
+            save_history: save_history_by_default(),
             shortcuts_version: Self::SHORTCUT_DEFAULTS_VERSION,
         }
     }
@@ -439,5 +452,16 @@ mod tests {
         .expect("the older settings shape still deserializes");
 
         assert_eq!(loaded.shortcuts_version, 0);
+    }
+
+    #[test]
+    fn a_settings_file_written_before_the_history_preference_does_not_record() {
+        let loaded: Settings = serde_json::from_str(
+            r#"{"language_pair":{"target":"en","partner":"vi"},"shortcuts":{"quick_translate":"Cmd+Shift+K","replace":"Cmd+Shift+R","read_aloud":"Cmd+Shift+S","translate_window":"Cmd+Shift+E"},"start_at_login":false}"#,
+        )
+        .expect("the older settings shape still deserializes");
+
+        assert!(!loaded.save_history);
+        assert!(!Settings::default().save_history);
     }
 }

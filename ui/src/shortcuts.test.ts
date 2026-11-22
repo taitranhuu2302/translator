@@ -24,6 +24,7 @@ const settings: Settings = {
   azure_region: "",
   onboarding_seen: true,
   auto_check_updates: true,
+  save_history: false,
 };
 
 describe("capturing a shortcut", () => {

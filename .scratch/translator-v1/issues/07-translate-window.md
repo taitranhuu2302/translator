@@ -12,6 +12,7 @@
 - [x] Translating from the window records the same history and cache behaviour as Quick Translate
 - [x] The window remembers its frame between launches
 - [x] A failure shows in the result pane with the provider named, and does not discard the input
+- [x] Emptying the input leaves both result panes as they are; submitting empty text clears the pane of the active mode
 
 ## Verification
 

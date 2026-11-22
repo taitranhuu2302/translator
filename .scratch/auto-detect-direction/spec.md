@@ -53,5 +53,7 @@ Detection itself stays exactly as it is: Vietnamese letters and tone marks mean 
 
 - Detecting unaccented Vietnamese, or any language identification beyond the current heuristic.
 - Adding a third language to the Language Pair.
-- Re-detecting as the user types, before they press Translate.
+- Re-detecting as the user types, before they press Translate. Built afterwards
+  as a label on the Source pane only; it does not change where a submit goes
+  (see ADR-0008).
 - Changing what `detected_source` means or removing it from the payload.

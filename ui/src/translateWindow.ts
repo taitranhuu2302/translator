@@ -71,3 +71,18 @@ export function reduceResult(
 export function swapDirection(translation: Translation): Direction {
   return { source: translation.target, target: translation.source };
 }
+
+/**
+ * The direction the next Translate would run in, as the Source pane names it.
+ *
+ * A direction the window has explicitly chosen — Swap, or a reopened history
+ * entry — wins over the live Detection, because that is what submitting will
+ * actually use. Editing the text clears the choice, and the Detection shows
+ * again.
+ */
+export function effectiveDirection(
+  chosen: Direction | null,
+  detected: Direction | null,
+): Direction | null {
+  return chosen ?? detected;
+}

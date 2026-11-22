@@ -29,6 +29,7 @@ export const MOCK_SETTINGS: Settings = {
   azure_region: "",
   onboarding_seen: true,
   auto_check_updates: true,
+  save_history: false,
 };
 
 /** The status the section composes from in the browser. A real local build

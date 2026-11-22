@@ -73,9 +73,24 @@ impl LanguagePair {
     /// Target. The source is the local guess when there is one, otherwise the
     /// pair's partner, so every request carries a complete language pair.
     pub fn direction_for(&self, text: &str) -> Direction {
-        let detected = guess_language(text);
-        let source = detected.clone().unwrap_or_else(|| self.partner.clone());
-        let mut target = self.destination_for(detected.as_ref());
+        self.direction_from(guess_language(text).as_ref())
+    }
+
+    /// The Direction a translation of `text` would run in, but only when the
+    /// local guess can name a source language.
+    ///
+    /// `None` is the same text `guess_language` admits it cannot read: the
+    /// translation itself would still run, from the pair's partner, but there is
+    /// no Detection to show. The Translate Window uses this to name the
+    /// direction while the text is still being typed.
+    pub fn detected_direction_for(&self, text: &str) -> Option<Direction> {
+        let detected = guess_language(text)?;
+        Some(self.direction_from(Some(&detected)))
+    }
+
+    fn direction_from(&self, detected: Option<&Language>) -> Direction {
+        let source = detected.cloned().unwrap_or_else(|| self.partner.clone());
+        let mut target = self.destination_for(detected);
         if target == source {
             target = other_of_the_v1_pair(&source);
         }
@@ -173,5 +188,55 @@ mod tests {
     #[test]
     fn digits_and_punctuation_do_not_hide_the_latin_letters_beside_them() {
         assert_eq!(guess_language("42 apples"), Some(Language::english()));
+    }
+
+    #[test]
+    fn a_detected_direction_reads_from_the_saved_pair() {
+        let pair = LanguagePair::default();
+
+        assert_eq!(
+            pair.detected_direction_for("Xin chào"),
+            Some(Direction {
+                source: Language::vietnamese(),
+                target: Language::english(),
+            })
+        );
+        assert_eq!(
+            pair.detected_direction_for("Hello"),
+            Some(Direction {
+                source: Language::english(),
+                target: Language::vietnamese(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_detected_direction_follows_the_target_it_is_given() {
+        // Target Vietnamese: Vietnamese text goes to English, not into itself.
+        let pair = LanguagePair::new(Language::vietnamese(), Language::english());
+
+        assert_eq!(
+            pair.detected_direction_for("Xin chào"),
+            Some(Direction {
+                source: Language::vietnamese(),
+                target: Language::english(),
+            })
+        );
+        assert_eq!(
+            pair.detected_direction_for("Hello"),
+            Some(Direction {
+                source: Language::english(),
+                target: Language::vietnamese(),
+            })
+        );
+    }
+
+    #[test]
+    fn a_detected_direction_is_absent_when_the_guess_is() {
+        let pair = LanguagePair::default();
+
+        assert_eq!(pair.detected_direction_for(""), None);
+        assert_eq!(pair.detected_direction_for("42 !?"), None);
+        assert_eq!(pair.detected_direction_for("こんにちは"), None);
     }
 }

@@ -27,6 +27,7 @@ export type SettingsMutation =
   | { kind: "reset" }
   | { kind: "azure_region"; region: string }
   | { kind: "auto_check_updates"; enabled: boolean }
+  | { kind: "save_history"; enabled: boolean }
   | { kind: "save_provider_key"; provider: ProviderId; key: string }
   | { kind: "clear_provider_key"; provider: ProviderId };
 
@@ -207,6 +208,32 @@ export function createSettingsWriter(
           notice: mutation.enabled
             ? "Automatic update checks turned on."
             : "Automatic update checks turned off.",
+        };
+      }
+      case "save_history": {
+        let current: Settings;
+        try {
+          current = await effects.read();
+        } catch {
+          return failed(SETTINGS_READ_FAILED);
+        }
+        if (current.save_history === mutation.enabled) {
+          return {
+            mirror: { kind: "settings", settings: current },
+            notice: null,
+          };
+        }
+        const next = { ...current, save_history: mutation.enabled };
+        try {
+          await effects.save(next);
+        } catch {
+          return failed(SAVE_FAILED);
+        }
+        return {
+          mirror: { kind: "settings", settings: next },
+          notice: mutation.enabled
+            ? "Translations and improvements will be saved to History."
+            : "New translations and improvements will not be saved. Entries already saved stay.",
         };
       }
       case "rebind": {

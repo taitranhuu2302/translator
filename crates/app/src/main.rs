@@ -23,10 +23,10 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 use translator_core::{
     AzureProvider, CachedProvider, CaptureError, Direction, EngineError, GroqProvider,
-    HistoryEntry, ImproveDelta, ImprovePart, Mode, MyMemoryProvider, PopupPrefill, ProviderId,
-    ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud, ReplacePhase, Replacement,
-    Selection, Settings, SettingsStore, ShortcutBindings, SpeechError, TextOutcome, Translation,
-    TranslatorEngine, UreqHttpClient,
+    HistoryEntry, ImproveDelta, ImprovePart, Language, LanguagePair, Mode, MyMemoryProvider,
+    PopupPrefill, ProviderId, ProviderLadder, ProviderStatus, QuickTranslation, ReadAloud,
+    ReplacePhase, Replacement, Selection, Settings, SettingsStore, ShortcutBindings, SpeechError,
+    TextOutcome, Translation, TranslatorEngine, UreqHttpClient,
 };
 use translator_platform_macos::{
     clipboard, migrate_legacy_state, MacCredentialStore, MacHistoryStore, MacSelectionCapture,
@@ -306,6 +306,19 @@ async fn translate_text(
     direction: Option<Direction>,
 ) -> Result<TextOutcome, EngineError> {
     state.engine.translate_text_in(&text, mode, direction)
+}
+
+/// The Direction a translation of `text` would run in, so the Translate Window
+/// can name it while the text is still being typed. It is a label, never an
+/// instruction: submitting resolves the direction again in the engine.
+///
+/// The pair comes from the view's loaded settings, so this reads no disk, calls
+/// no provider and writes nothing. `None` means the local guess could not name a
+/// language; the translation would still run from the pair's partner, but there
+/// is no Detection to show.
+#[tauri::command]
+async fn detect_direction(text: String, target: Language, partner: Language) -> Option<Direction> {
+    LanguagePair::new(target, partner).detected_direction_for(&text)
 }
 
 /// The Translate Window's Improve mode: corrected and better, streamed into the
@@ -1063,6 +1076,7 @@ fn main() {
             replace_with_translation,
             read_aloud,
             translate_text,
+            detect_direction,
             improve_text,
             provider_status,
             save_provider_key,

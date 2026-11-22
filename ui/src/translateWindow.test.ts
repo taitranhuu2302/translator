@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { AnswerToken } from "./answerToken";
 import type { Translation } from "./ipc";
 import {
+  effectiveDirection,
   EMPTY_RESULT,
   reduceResult,
   swapDirection,
@@ -45,6 +46,23 @@ describe("swapping a Translate Window translation", () => {
       source: "en",
       target: "vi",
     });
+  });
+});
+
+describe("the direction the Source pane names", () => {
+  const detected = { source: "vi", target: "en" };
+  const chosen = { source: "en", target: "vi" };
+
+  it("shows the live Detection while nothing has been chosen", () => {
+    expect(effectiveDirection(null, detected)).toEqual(detected);
+  });
+
+  it("shows a chosen direction over the Detection, because that is what submits", () => {
+    expect(effectiveDirection(chosen, detected)).toEqual(chosen);
+  });
+
+  it("has nothing to name when neither exists", () => {
+    expect(effectiveDirection(null, null)).toBeNull();
   });
 });
 
