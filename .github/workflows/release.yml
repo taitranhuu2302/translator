@@ -136,3 +136,27 @@ jobs:
             --title "Neris $VERSION" \
             --notes-file dist/notes.md \
             dist/*
+
+  # Waits for the draft to exist instead of racing it: a second workflow on the
+  # same tag would have to poll for the release `release` just created. The
+  # build itself is the same composite action the on-demand job runs, so there
+  # is one home for how the installer is made.
+  windows-installer:
+    name: Build and attach the Windows installer
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/build-windows-installer
+
+      # `contents: write` on this job is what lets the workflow's own token
+      # upload to the draft. Publishing stays a human step.
+      - name: Attach it to the draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(./scripts/version.sh)"
+          gh release upload "v$VERSION" target/release/bundle/nsis/*.exe

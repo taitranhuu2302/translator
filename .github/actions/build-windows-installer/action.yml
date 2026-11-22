@@ -1,0 +1,35 @@
+name: Build the Windows installer
+description: >
+  Build the embedded frontend and the NSIS installer with Tauri. Shared by the
+  on-demand job in `windows.yml` and the tag job in `release.yml` so both
+  produce the same file the same way (`.scratch/windows-build/spec.md`).
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: package-lock.json
+
+    - uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Install the workspace
+      shell: pwsh
+      run: npm ci --no-audit --no-fund
+
+    # `frontendDist` is embedded, not loaded from a dev server, so the real
+    # frontend has to exist before the Rust build reads it.
+    - name: Build the frontend
+      shell: pwsh
+      run: npm run build
+
+    # NSIS, per-user, WebView2 bootstrapper and the `.ico` all come from
+    # `crates/app/tauri.windows.conf.json`; `tauri.conf.json` stays untouched
+    # so the hand-rolled macOS bundle (ADR-0010) is unaffected.
+    - name: Build the installer
+      shell: pwsh
+      run: npx tauri build --bundles nsis

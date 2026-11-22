@@ -14,6 +14,7 @@ APP="target/bundle/Neris.app"
 DIST="dist"
 VERSION="$(./scripts/version.sh)"
 NAME="Neris_${VERSION}_universal"
+WINDOWS_NAME="Neris_${VERSION}_x64-setup.exe"
 REPOSITORY="taitranhuu2302/translator"
 BASE_URL="https://github.com/$REPOSITORY/releases/download/v$VERSION"
 
@@ -120,6 +121,21 @@ fi
   echo
   echo "Existing installs update themselves from the menu bar; this file is only"
   echo "needed for a first install or a manual reinstall."
+  # The `.exe` is attached by the release workflow's Windows job after this
+  # script has run, so the notes have to describe it from here: nothing else
+  # tells a person what the second download is.
+  echo
+  echo "## Windows — build only"
+  echo
+  echo "The release also carries \`$WINDOWS_NAME\`, an unsigned, per-user NSIS"
+  echo "installer, 64-bit. **The app inside it does not work on Windows yet.**"
+  echo "The shell installs and opens a window; selection capture, Replace, Read"
+  echo "Aloud, the provider key, the non-activating popup and the menu-bar item are"
+  echo "macOS-only until the Windows port lands (\`.scratch/windows-port/spec.md\`)."
+  echo
+  echo "It is not part of the update channel: \`latest.json\` has no Windows entry,"
+  echo "so an installed copy never checks for or applies updates. SmartScreen warns"
+  echo "once on first install — More info → Run anyway."
 } > "$DIST/notes.md"
 
 echo

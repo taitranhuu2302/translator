@@ -1,15 +1,11 @@
 name: Windows installer
 
-# A build, not a release: the `.exe` exists on the run for someone to install,
-# and is never attached to a GitHub Release (`.scratch/windows-build/spec.md`).
-# The shell's compilation is already gated on every push and pull request in
-# `ci.yml`; packaging a release binary is asked for, or rides a tag. The
-# installer is unsigned and per-user, and the app it wraps does not run on
-# Windows yet — the port is `.scratch/windows-port/spec.md`.
+# The on-demand build: the `.exe` exists on the run for someone to install.
+# A tag is not handled here — `release.yml` builds the same file through
+# `.github/actions/build-windows-installer` and attaches it to the draft
+# release, so a tag would otherwise build it twice.
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
 
 permissions:
   contents: read
@@ -25,29 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install the workspace
-        run: npm ci --no-audit --no-fund
-
-      # `frontendDist` is embedded, not loaded from a dev server, so the real
-      # frontend has to exist before the Rust build reads it.
-      - name: Build the frontend
-        run: npm run build
-
-      # NSIS, per-user, WebView2 bootstrapper and the `.ico` all come from
-      # `crates/app/tauri.windows.conf.json`; `tauri.conf.json` stays untouched
-      # so the hand-rolled macOS bundle (ADR-0010) is unaffected.
-      - name: Build the installer
-        run: npx tauri build --bundles nsis
+      - uses: ./.github/actions/build-windows-installer
 
       - name: Read the version
         id: version

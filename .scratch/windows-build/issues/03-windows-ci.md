@@ -50,3 +50,24 @@ The one thing to watch on a future run is the annotation this one carried:
 `actions/checkout@v4`, `setup-node@v4` and `upload-artifact@v4` are being forced
 onto Node 24 because Node 20 is deprecated. It works today; it will need a
 version bump before GitHub drops that shim.
+
+### The tag half moved into `release.yml`
+
+The first version of this ticket had `windows.yml` listen on `v*` as well and
+attach nothing, so `v0.2.0` shipped its `.exe` by hand. That left the file
+missing from every later release unless someone remembered, so the split is now:
+
+- `.github/actions/build-windows-installer` — the single recipe for the `.exe`
+  (frontend, Rust build, `npx tauri build --bundles nsis`).
+- `windows.yml` — `workflow_dispatch` only; artifact, never a release.
+- `release.yml` — a `windows-installer` job with `needs: release`; it builds the
+  same file and uploads it to the draft the macOS job just created. Waiting on
+  the job is what removes the race a second workflow would have had polling for
+  a release that does not exist yet.
+
+`scripts/release.sh` writes the "Windows — build only" section into the notes, so
+the release page explains the second download without a hand edit.
+
+The release path has not been run yet — the next `vX.Y.Z` tag is its first
+exercise. The dispatch path was re-run after the extraction to prove the shared
+action still builds the Windows job's file.
