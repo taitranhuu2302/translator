@@ -19,7 +19,7 @@ jobs:
           echo "b64 length: ${#CERT_B64}"
           printf '%s' "$CERT_B64" > "$RUNNER_TEMP/c.b64"
           echo "b64 file bytes: $(wc -c < "$RUNNER_TEMP/c.b64" | tr -d ' ')"
-          openssl base64 -d -in "$RUNNER_TEMP/c.b64" -out "$RUNNER_TEMP/c.p12"
+          base64 -D -i "$RUNNER_TEMP/c.b64" -o "$RUNNER_TEMP/c.p12"
           echo "decode exit: $?"
           echo "p12 bytes: $(wc -c < "$RUNNER_TEMP/c.p12" | tr -d ' ')"
           file "$RUNNER_TEMP/c.p12"

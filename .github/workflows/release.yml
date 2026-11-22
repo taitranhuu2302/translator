@@ -63,7 +63,9 @@ jobs:
           KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
           CERTIFICATE="$RUNNER_TEMP/certificate.p12"
           printf '%s' "$CERTIFICATE_BASE64" > "$RUNNER_TEMP/certificate.b64"
-          openssl base64 -d -in "$RUNNER_TEMP/certificate.b64" -out "$CERTIFICATE"
+          # macOS base64, not `openssl base64 -d`: LibreSSL's decoder stops
+          # after its first buffer and leaves a truncated p12 behind.
+          base64 -D -i "$RUNNER_TEMP/certificate.b64" -o "$CERTIFICATE"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
