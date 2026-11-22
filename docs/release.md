@@ -1,6 +1,6 @@
 # Release runbook
 
-The pipeline is tag-driven (ADR-0008). This file is everything the person
+The pipeline is tag-driven (ADR-0010). This file is everything the person
 cutting a release has to know that is not in the workflow itself.
 
 ## One-time setup

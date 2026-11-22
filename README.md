@@ -94,7 +94,7 @@ Both `scripts/build.sh` and the release workflow delegate to `scripts/package.sh
 ./scripts/package.sh --universal --updater  # what a release ships
 ```
 
-A release is a tag on `main`: bump the version with `./scripts/set-version.sh X.Y.Z`, push `vX.Y.Z`, and the workflow verifies the tag, re-runs the suite, builds, signs and opens a draft. The secrets, the update key and the publishing step are in [docs/release.md](docs/release.md). See [ADR-0008](docs/adr/0008-tag-driven-release-from-github.md).
+A release is a tag on `main`: bump the version with `./scripts/set-version.sh X.Y.Z`, push `vX.Y.Z`, and the workflow verifies the tag, re-runs the suite, builds, signs and opens a draft. The secrets, the update key and the publishing step are in [docs/release.md](docs/release.md). See [ADR-0010](docs/adr/0010-tag-driven-release-from-github.md).
 
 ## Develop
 
