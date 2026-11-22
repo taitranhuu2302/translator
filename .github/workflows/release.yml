@@ -75,6 +75,15 @@ jobs:
           # codesign must use the key without an interactive prompt.
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          # The certificate is self-signed, so it is only a *valid* identity
+          # once it is trusted; scripts/package.sh gates on find-identity -v.
+          security find-certificate -c "Translator Local Signing" -p "$KEYCHAIN" \
+            | awk '/BEGIN CERTIFICATE/{n++} n==1' > "$RUNNER_TEMP/identity.pem"
+          sudo security add-trusted-cert -d -r trustRoot \
+            -k /Library/Keychains/System.keychain "$RUNNER_TEMP/identity.pem"
+          rm -f "$RUNNER_TEMP/identity.pem"
+
           security default-keychain -s "$KEYCHAIN"
           security list-keychains -d user -s "$KEYCHAIN" \
             $(security list-keychains -d user | tr -d '"')
@@ -82,6 +91,20 @@ jobs:
           rm -f "$CERTIFICATE" "$RUNNER_TEMP/certificate.b64"
 
           security find-identity -v -p codesigning
+
+      # The signing key is password-protected, and the password is only ever a
+      # secret; sign a throwaway file so a wrong one fails here instead of
+      # after the suite and the universal build.
+      - name: The update key opens with its password
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          printf 'neris\n' > "$RUNNER_TEMP/update-key-probe"
+          npx tauri signer sign "$RUNNER_TEMP/update-key-probe"
+          test -f "$RUNNER_TEMP/update-key-probe.sig"
+          rm -f "$RUNNER_TEMP/update-key-probe" "$RUNNER_TEMP/update-key-probe.sig"
 
       # The release re-runs the suite before it packages anything, so a tag
       # never ships a tree the tests would reject.
