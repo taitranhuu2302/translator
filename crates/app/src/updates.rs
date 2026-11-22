@@ -10,9 +10,11 @@
 //! No update restarts the app by itself. A ready update waits as one menu bar
 //! row and one Settings button, and the user chooses the moment.
 
+#[cfg(feature = "updater")]
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::mpsc;
 use std::sync::Mutex;
+#[cfg(feature = "updater")]
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager};
@@ -23,6 +25,7 @@ use crate::AppState;
 pub const EVENT: &str = "update-status";
 
 /// How often a Release build looks for a newer one while auto-check is on.
+#[cfg(feature = "updater")]
 const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Where the update is in its life. `disabled` is a build that cannot update
@@ -33,10 +36,16 @@ pub enum UpdateState {
     #[default]
     Disabled,
     Idle,
+    // Only a build with the updater can reach these, so the other build does
+    // not compile them at all.
+    #[cfg(feature = "updater")]
     Checking,
+    #[cfg(feature = "updater")]
     Downloading,
+    #[cfg(feature = "updater")]
     UpToDate,
     Ready,
+    #[cfg(feature = "updater")]
     Failed,
 }
 
@@ -59,6 +68,7 @@ pub struct Updates {
     status: Mutex<UpdateStatus>,
     /// One check at a time: a manual Check now must not race the six-hourly one
     /// into two downloads.
+    #[cfg(feature = "updater")]
     busy: AtomicBool,
     /// Wakes the six-hourly sleep when the auto-check preference changes, so
     /// turning it off stops the next check and turning it on checks now.
@@ -69,6 +79,7 @@ impl Updates {
     pub fn new() -> Self {
         Self {
             status: Mutex::new(UpdateStatus::default()),
+            #[cfg(feature = "updater")]
             busy: AtomicBool::new(false),
             wake: Mutex::new(None),
         }
@@ -87,16 +98,19 @@ impl Updates {
         before != after
     }
 
+    #[cfg(feature = "updater")]
     fn claim(&self) -> bool {
         self.busy
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
     }
 
+    #[cfg(feature = "updater")]
     fn release(&self) {
         self.busy.store(false, Ordering::SeqCst);
     }
 
+    #[cfg(feature = "updater")]
     fn arm(&self, sender: mpsc::Sender<()>) {
         *self.wake.lock().expect("update wake lock") = Some(sender);
     }
@@ -175,6 +189,8 @@ pub fn prepare(app: &AppHandle) {
 /// that it cannot update.
 #[cfg(feature = "updater")]
 pub fn start(app: &AppHandle) {
+    use std::sync::mpsc::RecvTimeoutError;
+
     prepare(app);
 
     let (sender, receiver) = mpsc::channel();
@@ -314,6 +330,7 @@ pub fn restart(app: &AppHandle) -> ! {
 
 /// The preference as the file holds it now. A file that cannot be read keeps
 /// the shipped value, the same way launch does.
+#[cfg(feature = "updater")]
 fn auto_check_enabled(app: &AppHandle) -> bool {
     app.state::<AppState>()
         .engine
