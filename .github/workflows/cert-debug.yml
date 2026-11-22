@@ -9,31 +9,46 @@ jobs:
   debug:
     runs-on: macos-15
     steps:
-      - name: Inspect the certificate secret
+      - name: Import and sign a probe
         env:
           CERT_B64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           CERT_PW: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PW: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           set -uo pipefail
-          echo "b64 length: ${#CERT_B64}"
+          KC="$RUNNER_TEMP/d.keychain-db"
           printf '%s' "$CERT_B64" > "$RUNNER_TEMP/c.b64"
-          echo "b64 file bytes: $(wc -c < "$RUNNER_TEMP/c.b64" | tr -d ' ')"
           base64 -D -i "$RUNNER_TEMP/c.b64" -o "$RUNNER_TEMP/c.p12"
-          echo "decode exit: $?"
-          echo "p12 bytes: $(wc -c < "$RUNNER_TEMP/c.p12" | tr -d ' ')"
-          file "$RUNNER_TEMP/c.p12"
-          openssl pkcs12 -info -noout -in "$RUNNER_TEMP/c.p12" \
-            -passin "pass:$CERT_PW" >/dev/null 2>&1
-          echo "pkcs12 readable with password: $?"
+          security create-keychain -p "$KEYCHAIN_PW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KC"
+          security import "$RUNNER_TEMP/c.p12" -k "$KC" -P "$CERT_PW" \
+            -T /usr/bin/codesign
+          echo "import exit: $?"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PW" "$KC"
+          echo "partition exit: $?"
+          security default-keychain -s "$KC"
+          security list-keychains -d user -s "$KC" \
+            $(security list-keychains -d user | tr -d '"')
 
-          security create-keychain -p "$KEYCHAIN_PW" "$RUNNER_TEMP/d.keychain-db"
-          security unlock-keychain -p "$KEYCHAIN_PW" "$RUNNER_TEMP/d.keychain-db"
-          security import "$RUNNER_TEMP/c.p12" -k "$RUNNER_TEMP/d.keychain-db" \
-            -P "$CERT_PW" -T /usr/bin/codesign
-          echo "import (-T codesign) exit: $?"
-          security import "$RUNNER_TEMP/c.p12" -k "$RUNNER_TEMP/d.keychain-db" \
-            -P "$CERT_PW"
-          echo "import (plain) exit: $?"
-          security show-keychain-info "$RUNNER_TEMP/d.keychain-db"
-          security find-identity -v -p codesigning "$RUNNER_TEMP/d.keychain-db"
+          echo "--- find-identity -v before trust ---"
+          security find-identity -v -p codesigning
+          echo "--- find-identity (all) before trust ---"
+          security find-identity -p codesigning
+
+          cp /bin/ls "$RUNNER_TEMP/probe"
+          codesign --force --timestamp=none --sign "Translator Local Signing" \
+            --identifier com.taitran.neris.probe "$RUNNER_TEMP/probe"
+          echo "codesign before trust exit: $?"
+
+          security find-certificate -c "Translator Local Signing" -p -k "$KC" \
+            | awk '/BEGIN CERTIFICATE/{n++} n==1' > "$RUNNER_TEMP/id.pem"
+          sudo security add-trusted-cert -d -r trustRoot \
+            -k /Library/Keychains/System.keychain "$RUNNER_TEMP/id.pem"
+          echo "add-trusted-cert exit: $?"
+
+          echo "--- find-identity -v after trust ---"
+          security find-identity -v -p codesigning
+          codesign --verify --strict "$RUNNER_TEMP/probe"
+          echo "verify exit: $?"
