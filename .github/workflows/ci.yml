@@ -75,3 +75,9 @@ jobs:
 
       - name: Core tests
         run: cargo test -p translator-core
+
+      # The shell crosses over only because the macOS-only code is gated
+      # (`.scratch/windows-build/spec.md`); this build is what proves a new
+      # AppKit import did not escape its `cfg`.
+      - name: Shell build
+        run: cargo build -p translator-app

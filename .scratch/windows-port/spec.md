@@ -45,6 +45,14 @@ The port keeps the three-crate shape and adds a fourth:
 
 The first ticket is the spike, and its answer decides the rest.
 
+**Slice 0 has landed** in `.scratch/windows-build/`: `tauri-nspanel` is a macOS
+target dependency, `panel` and `hud` have non-AppKit counterparts with the same
+surface, the LaunchAgent launcher and the activation policy are gated, and
+`icons/icon.ico` exists. `cargo build -p translator-app` is gated on every pull
+request. The port starts from a shell that compiles, not from one that cannot.
+The `macos-private-api` feature and the Windows presenter of the same workflows
+are still open.
+
 ## CI and release contract
 
 Fixed here so the port plugs into the pipeline instead of reopening it:
